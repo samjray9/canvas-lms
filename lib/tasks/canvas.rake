@@ -32,6 +32,7 @@ namespace :canvas do
     build_api_docs = ENV["COMPILE_ASSETS_API_DOCS"] != "0"
     build_css = ENV["COMPILE_ASSETS_CSS"] != "0"
     build_styleguide = ENV["COMPILE_ASSETS_STYLEGUIDE"] != "0"
+    build_i18n = ENV["RAILS_LOAD_ALL_LOCALES"] != "0"
     build_js = ENV["COMPILE_ASSETS_BUILD_JS"] != "0"
     build_prod_js = ENV['RAILS_ENV'] == 'production' || ENV['USE_OPTIMIZED_JS'] == 'true' || ENV['USE_OPTIMIZED_JS'] == 'True'
     # build dev bundles even in prod mode so you can debug with ?optimized_js=0
@@ -49,31 +50,19 @@ namespace :canvas do
       ].compact
 
       task 'i18n:generate_js' => [
-        # canvas_quizzes is quirky in that we can only extract its phrases from
-        # its build artifacts and not from its source! this is unlike other
-        # client apps
-        'js:build_client_app[canvas_quizzes]'
-      ] if build_js
-
-      task 'js:build_client_app[canvas_quizzes]' => [ 'css:compile' ] do |name|
-        {
-          name: name,
-          runner: -> { Rake::Task['js:build_client_app'].invoke('canvas_quizzes') }
-        }
-      end if build_js
+        ('js:yarn_install' if npm_install)
+      ].compact if build_i18n && build_js
 
       task 'js:webpack_development' => [
         # public/dist/brandable_css/brandable_css_bundles_with_deps.json needs
         # to exist before we run handlebars stuff, so we have to do this first
         'css:compile',
-        'i18n:generate_js',
-        'js:build_client_app[canvas_quizzes]',
+        ('i18n:generate_js' if build_i18n),
       ] if build_js && build_dev_js
 
       task 'js:webpack_production' => [
         'css:compile',
-        'i18n:generate_js',
-        'js:build_client_app[canvas_quizzes]',
+        ('i18n:generate_js' if build_i18n),
       ] if build_js && build_prod_js
     end
 

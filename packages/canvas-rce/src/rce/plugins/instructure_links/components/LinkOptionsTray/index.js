@@ -15,17 +15,17 @@
  * You should have received a copy of the GNU Affero General Public License along
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
-import React, {useEffect, useState} from 'react'
+import React, {useCallback, useEffect, useState} from 'react'
 import {bool, func, object, oneOf, shape, string} from 'prop-types'
 import {Button, CloseButton} from '@instructure/ui-buttons'
 
 import {Alert} from '@instructure/ui-alerts'
 import {Heading} from '@instructure/ui-heading'
 import {FormFieldGroup} from '@instructure/ui-form-field'
-import {Checkbox} from '@instructure/ui-forms'
+import {Checkbox} from '@instructure/ui-checkbox'
 import {TextInput} from '@instructure/ui-text-input'
-import {Flex} from '@instructure/ui-layout'
-import {Tray} from '@instructure/ui-overlays'
+import {Flex} from '@instructure/ui-flex'
+import {Tray} from '@instructure/ui-tray'
 import validateURL from '../../validateURL'
 import formatMessage from '../../../../../format-message'
 import {
@@ -33,6 +33,7 @@ import {
   DISPLAY_AS_EMBED,
   DISPLAY_AS_EMBED_DISABLED
 } from '../../../shared/ContentSelection'
+import {getTrayHeight} from '../../../shared/trayUtils'
 
 export default function LinkOptionsTray(props) {
   const content = props.content || {}
@@ -104,7 +105,7 @@ export default function LinkOptionsTray(props) {
       shouldContainFocus
       shouldReturnFocus
     >
-      <Flex direction="column" height="100vh">
+      <Flex direction="column" height={getTrayHeight()}>
         <Flex.Item as="header" padding="medium">
           <Flex direction="row">
             <Flex.Item grow shrink>

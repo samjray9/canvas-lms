@@ -86,11 +86,13 @@ class Oauth2ProviderController < ApplicationController
   end
 
   def accept
+    return render plain: t("Invalid or missing session for oauth"), status: 400 unless session[:oauth2]
     redirect_params = Canvas::Oauth::Provider.final_redirect_params(session[:oauth2], @current_user, logged_in_user, remember_access: params[:remember_access])
     redirect_to Canvas::Oauth::Provider.final_redirect(self, redirect_params)
   end
 
   def deny
+    return render plain: t("Invalid or missing session for oauth"), status: 400 unless session[:oauth2]
     params = { error: "access_denied" }
     params[:state] = session[:oauth2][:state] if session[:oauth2].key? :state
     redirect_to Canvas::Oauth::Provider.final_redirect(self, params)
@@ -106,7 +108,7 @@ class Oauth2ProviderController < ApplicationController
     elsif grant_type == "refresh_token"
       Canvas::Oauth::GrantTypes::RefreshToken.new(client_id, secret, params)
     elsif grant_type == 'client_credentials'
-      Canvas::Oauth::GrantTypes::ClientCredentials.new(params, request.host, request.protocol)
+      Canvas::Oauth::GrantTypes::ClientCredentials.new(params, request.host_with_port, request.protocol)
     else
       Canvas::Oauth::GrantTypes::BaseType.new(client_id, secret, params)
     end

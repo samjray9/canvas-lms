@@ -87,13 +87,12 @@ class LearningOutcomeResult < ActiveRecord::Base
   end
 
   def save_to_version(attempt)
+    InstStatsd::Statsd.increment('learning_outcome_result.create') if new_record?
     current_version = self.versions.current.try(:model)
     if current_version.try(:attempt) && attempt < current_version.attempt
       versions = self.versions.sort_by(&:created_at).reverse.select{|v| v.model.attempt == attempt}
       if !versions.empty?
         versions.each do |version|
-          InstStatsd::Statsd.increment('learning_outcome_result.create') if new_record?
-
           version_data = YAML::load(version.yaml)
           version_data["score"] = self.score
           version_data["mastery"] = self.mastery
@@ -140,16 +139,19 @@ class LearningOutcomeResult < ActiveRecord::Base
   # rubocop:disable Metrics/LineLength
   scope :exclude_muted_associations, -> {
     joins("LEFT JOIN #{RubricAssociation.quoted_table_name} rassoc ON rassoc.id = learning_outcome_results.association_id AND learning_outcome_results.association_type = 'RubricAssociation'").
-      joins("LEFT JOIN #{Assignment.quoted_table_name} ra ON ra.id = rassoc.association_id AND rassoc.association_type = 'Assignment' AND rassoc.purpose = 'grading'").
+      joins("LEFT JOIN #{Assignment.quoted_table_name} ra ON ra.id = rassoc.association_id AND rassoc.association_type = 'Assignment' AND rassoc.purpose = 'grading' AND rassoc.workflow_state = 'active'").
       joins("LEFT JOIN #{Quizzes::Quiz.quoted_table_name} ON quizzes.id = learning_outcome_results.association_id AND learning_outcome_results.association_type = 'Quizzes::Quiz'").
       joins("LEFT JOIN #{Assignment.quoted_table_name} qa ON qa.id = quizzes.assignment_id").
       joins("LEFT JOIN #{Assignment.quoted_table_name} sa ON sa.id = learning_outcome_results.association_id AND learning_outcome_results.association_type = 'Assignment'").
       joins("LEFT JOIN #{Submission.quoted_table_name} ON submissions.user_id = learning_outcome_results.user_id AND submissions.assignment_id in (ra.id, qa.id, sa.id)").
+      joins("LEFT JOIN #{PostPolicy.quoted_table_name} pc on pc.assignment_id  in (ra.id, qa.id, sa.id)").
       where('(ra.id IS NULL AND qa.id IS NULL AND sa.id IS NULL)'\
             ' OR submissions.posted_at IS NOT NULL'\
             ' OR ra.grading_type = \'not_graded\''\
             ' OR qa.grading_type = \'not_graded\''\
-            ' OR sa.grading_type = \'not_graded\'')
+            ' OR sa.grading_type = \'not_graded\''\
+            ' OR pc.id IS NULL'\
+            ' OR (pc.id IS NOT NULL AND pc.post_manually = False)')
   }
   # rubocop:enable Metrics/LineLength
 

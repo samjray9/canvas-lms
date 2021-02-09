@@ -18,6 +18,8 @@
 # with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
+require 'uri'
+
 module Api::V1::Attachment
   include Api::V1::Json
   include Api::V1::Locked
@@ -26,7 +28,14 @@ module Api::V1::Attachment
   include Api::V1::UsageRights
 
   def can_view_hidden_files?(context=@context, user=@current_user, session=nil)
-    context.grants_any_right?(user, session, :manage_files, :read_as_admin, :manage_contents)
+    context.grants_any_right?(
+      user,
+      session,
+      :read_as_admin,
+      :manage_contents,
+      :manage_files,
+      *RoleOverride::GRANULAR_FILE_PERMISSIONS
+    )
   end
 
   def attachments_json(files, user, url_options = {}, options = {})
@@ -165,13 +174,37 @@ module Api::V1::Attachment
     hash
   end
 
+  def infer_file_extension(params)
+    mime_type = infer_upload_content_type(params)
+
+    return File.mime_types[mime_type] if mime_type
+
+    filenames_with_extension = filenames(params).select{ |item| item.include?('.') }
+    filenames_with_extension&.first&.split('.')&.last&.downcase
+  end
+
+  def infer_filename_from_url(url)
+    return url if url.blank?
+
+    uri = URI.parse(url)
+
+    File.basename(uri.path)
+  rescue URI::InvalidURIError
+    nil
+  end
+
   def infer_upload_filename(params)
-    params[:name] || params[:filename]
+    return nil unless params
+
+    params[:name] || params[:filename] || infer_filename_from_url(params[:url])
   end
 
   def infer_upload_content_type(params, default_mimetype = nil)
-    mime_type = params[:content_type].presence || Attachment.mimetype(infer_upload_filename(params))
-    mime_type && mime_type != 'unknown/unknown' ? mime_type : default_mimetype
+    mime_type = params[:content_type].presence
+    return mime_type if valid_mime_type?(mime_type)
+
+    mime_types = valid_mime_types(params)
+    mime_types&.first || default_mimetype
   end
 
   def infer_upload_folder(context, params)
@@ -182,6 +215,21 @@ module Api::V1::Attachment
     elsif params[:parent_folder_path].is_a?(String)
       Folder.assert_path(params[:parent_folder_path], context)
     end
+  end
+
+  def filenames(params)
+    [:name, :filename, :url].map { |param| params[param] }.compact
+  end
+
+  def valid_mime_type?(mime_type)
+    mime_type.present? && mime_type != 'unknown/unknown'
+  end
+
+  def valid_mime_types(params)
+    filenames(params).map do |filename|
+      mime_type = Attachment.mimetype(filename)
+      mime_type if valid_mime_type?(mime_type)
+    end.compact
   end
 
   def validate_on_duplicate(params)
@@ -231,10 +279,20 @@ module Api::V1::Attachment
       end
     end
 
+    # allow uploading a file for a user, specifically for the LTI workflow.
+    # the Assignment and Grade Service (app/controllers/lti/ims) uses this
+    # to allow LTI tools to upload a file on behalf of a student as part
+    # of submitting an assignment.
+    current_user = opts[:override_current_user_with] || @current_user
+    # since the LTI service has no concept of masquerading, this user should
+    # be considered both current and logged in. `logged_in_user` is nil during
+    # an LTI request
+    actual_user = opts[:override_logged_in_user] ? current_user : logged_in_user
+
     # user must have permission on folder to user a custom folder other
     # than the "preferred" folder (that specified by the caller).
     folder = infer_upload_folder(context, params)
-    return if folder && !authorized_action(folder, @current_user, :manage_contents)
+    return if folder && !authorized_action(folder, current_user, :manage_contents)
 
     # no permission check required to use the preferred folder
 
@@ -244,13 +302,13 @@ module Api::V1::Attachment
     elsif params[:assignment_id].present?
       Assignment.find_by(id: params[:assignment_id])
     else
-      @current_user
+      current_user
     end
 
     if InstFS.enabled?
       additional_capture_params = {}
       progress_json_result = if params[:url]
-        progress = ::Progress.new(context: progress_context, user: @current_user, tag: :upload_via_url)
+        progress = ::Progress.new(context: progress_context, user: current_user, tag: :upload_via_url)
         progress.start
         progress.save!
 
@@ -262,18 +320,18 @@ module Api::V1::Attachment
           }
         end
 
-        progress_json(progress, @current_user, session)
+        progress_json(progress, current_user, session)
       end
 
       json = InstFS.upload_preflight_json(
         context: context,
         root_account: context.try(:root_account) || @domain_root_account,
-        user: logged_in_user,
-        acting_as: @current_user,
+        user: actual_user,
+        acting_as: current_user,
         access_token: @access_token,
         folder: folder,
         filename: infer_upload_filename(params),
-        content_type: infer_upload_content_type(params),
+        content_type: infer_upload_content_type(params, 'unknown/unknown'),
         on_duplicate: infer_on_duplicate(params),
         quota_exempt: !opts[:check_quota],
         capture_url: api_v1_files_capture_url,
@@ -286,7 +344,7 @@ module Api::V1::Attachment
       @attachment = Attachment.new
       @attachment.shard = context.shard
       @attachment.context = context
-      @attachment.user = @current_user
+      @attachment.user = current_user
       @attachment.filename = infer_upload_filename(params)
       @attachment.content_type = infer_upload_content_type(params, 'unknown/unknown')
       @attachment.folder = folder
@@ -298,7 +356,7 @@ module Api::V1::Attachment
 
       on_duplicate = infer_on_duplicate(params)
       if params[:url]
-        progress = ::Progress.new(context: progress_context, user: @current_user, tag: :upload_via_url)
+        progress = ::Progress.new(context: progress_context, user: current_user, tag: :upload_via_url)
         progress.reset!
 
         executor = Services::SubmitHomeworkService.create_clone_url_executor(
@@ -309,7 +367,7 @@ module Api::V1::Attachment
           @attachment, progress, params[:eula_agreement_timestamp], params[:comment], executor, opts[:submit_assignment]
         )
 
-        json = { progress: progress_json(progress, @current_user, session) }
+        json = { progress: progress_json(progress, current_user, session) }
       else
         on_duplicate = nil if on_duplicate == 'overwrite'
         quota_exemption = @attachment.quota_exemption_key if !opts[:check_quota]

@@ -23,9 +23,10 @@ import uniqBy from 'lodash/uniqBy'
 
 import themeable from '@instructure/ui-themeable'
 import {IconKeyboardShortcutsLine} from '@instructure/ui-icons'
-import {ScreenReaderContent} from '@instructure/ui-a11y'
+import {ScreenReaderContent} from '@instructure/ui-a11y-content'
 import {Alert} from '@instructure/ui-alerts'
 import {Spinner} from '@instructure/ui-spinner'
+import {View} from '@instructure/ui-view'
 
 import formatMessage from '../format-message'
 import * as contentInsertion from './contentInsertion'
@@ -33,7 +34,7 @@ import indicatorRegion from './indicatorRegion'
 import indicate from '../common/indicate'
 import bridge from '../bridge'
 import CanvasContentTray, {trayProps} from './plugins/shared/CanvasContentTray'
-import StatusBar from './StatusBar'
+import StatusBar, {WYSIWYG_VIEW, PRETTY_HTML_EDITOR_VIEW, RAW_HTML_EDITOR_VIEW} from './StatusBar'
 import ShowOnFocusButton from './ShowOnFocusButton'
 import theme from '../skins/theme'
 import {isAudio, isImage, isVideo} from './plugins/shared/fileTypeUtils'
@@ -43,10 +44,11 @@ import alertHandler from './alertHandler'
 import {isFileLink, isImageEmbed} from './plugins/shared/ContentSelection'
 import {
   VIDEO_SIZE_DEFAULT,
-  AUDIO_PLAYER_SIZE
+  AUDIO_PLAYER_SIZE,
 } from './plugins/instructure_record/VideoOptionsTray/TrayController'
 
 const RestoreAutoSaveModal = React.lazy(() => import('./RestoreAutoSaveModal'))
+const RceHtmlEditor = React.lazy(() => import('./RceHtmlEditor'))
 
 const ASYNC_FOCUS_TIMEOUT = 250
 const DEFAULT_RCE_HEIGHT = '400'
@@ -147,6 +149,12 @@ function renderLoading() {
   return formatMessage('Loading')
 }
 
+// safari implements only the webkit prefixed version of the fullscreen api
+const FS_ELEMENT =
+  document.fullscreenElement === undefined ? 'webkitFullscreenElement' : 'fullscreenElement'
+const FS_REQUEST = document.body.requestFullscreen ? 'requestFullscreen' : 'webkitRequestFullscreen'
+const FS_EXIT = document.exitFullscreen ? 'exitFullscreen' : 'webkitExitFullscreen'
+
 let alertIdValue = 0
 
 @themeable(theme, styles)
@@ -158,12 +166,13 @@ class RCEWrapper extends React.Component {
   static propTypes = {
     autosave: PropTypes.shape({
       enabled: PropTypes.bool,
-      rce_auto_save_max_age_ms: PropTypes.number
+      rce_auto_save_max_age_ms: PropTypes.number,
     }),
     confirmFunc: PropTypes.func,
     defaultContent: PropTypes.string,
     editorOptions: PropTypes.object,
     handleUnmount: PropTypes.func,
+    editorView: PropTypes.oneOf([WYSIWYG_VIEW, PRETTY_HTML_EDITOR_VIEW, RAW_HTML_EDITOR_VIEW]),
     id: PropTypes.string,
     language: PropTypes.string,
     onFocus: PropTypes.func,
@@ -174,18 +183,19 @@ class RCEWrapper extends React.Component {
     languages: PropTypes.arrayOf(
       PropTypes.shape({
         id: PropTypes.string.isRequired,
-        label: PropTypes.string.isRequired
+        label: PropTypes.string.isRequired,
       })
     ),
     tinymce: PropTypes.object,
     trayProps,
-    instRecordDisabled: PropTypes.bool
+    instRecordDisabled: PropTypes.bool,
+    use_rce_pretty_html_editor: PropTypes.bool,
   }
 
   static defaultProps = {
     trayProps: null,
     languages: [{id: 'en', label: 'English'}],
-    autosave: {enabled: false}
+    autosave: {enabled: false},
   }
 
   static skinCssInjected = false
@@ -203,7 +213,8 @@ class RCEWrapper extends React.Component {
     // test override points
     this.indicator = false
 
-    this._elementRef = null
+    this._elementRef = React.createRef()
+    this._prettyHtmlEditorRef = React.createRef()
     this._showOnFocusButton = null
 
     injectTinySkin()
@@ -211,13 +222,18 @@ class RCEWrapper extends React.Component {
     this.state = {
       path: [],
       wordCount: 0,
-      isHtmlView: false,
+      editorView: props.editorView || WYSIWYG_VIEW,
       KBShortcutModalOpen: false,
       messages: [],
       announcement: null,
       confirmAutoSave: false,
       autoSavedContent: '',
-      id: this.props.id || this.props.textareaId || `${Date.now()}`
+      id: this.props.id || this.props.textareaId || `${Date.now()}`,
+      height: 'auto',
+      fullscreenState: {
+        headerDisp: 'static',
+        isTinyFullscreen: false,
+      },
     }
 
     alertHandler.alertFunc = this.addAlert
@@ -383,6 +399,7 @@ class RCEWrapper extends React.Component {
 
   insertImagePlaceholder(fileMetaProps) {
     let width, height
+    let align = 'middle'
     if (isImage(fileMetaProps.contentType) && fileMetaProps.displayAs !== 'link') {
       const image = new Image()
       image.src = fileMetaProps.domObject.preview
@@ -399,9 +416,11 @@ class RCEWrapper extends React.Component {
     } else if (isVideo(fileMetaProps.contentType || fileMetaProps.type)) {
       width = VIDEO_SIZE_DEFAULT.width
       height = VIDEO_SIZE_DEFAULT.height
+      align = 'bottom'
     } else if (isAudio(fileMetaProps.contentType || fileMetaProps.type)) {
       width = AUDIO_PLAYER_SIZE.width
       height = AUDIO_PLAYER_SIZE.height
+      align = 'bottom'
     } else {
       width = `${fileMetaProps.name.length}rem`
       height = '1rem'
@@ -409,20 +428,20 @@ class RCEWrapper extends React.Component {
     // if you're wondering, the &nbsp; scatter about in the svg
     // is because tinymce will strip empty elements
     const markup = `
-    <div
+    <span
       aria-label="${formatMessage('Loading')}"
       data-placeholder-for="${encodeURIComponent(fileMetaProps.name)}"
-      style="width: ${width}; height: ${height};"
+      style="width: ${width}; height: ${height}; vertical-align: ${align};"
     >
-    <svg xmlns="http://www.w3.org/2000/svg" version="1.1" x="0px" y="0px" viewBox="0 0 100 100" height="100px" width="100px">
-      <g style="stroke-width:.5rem;fill:none;stroke-linecap:round;">&nbsp;
-        <circle class="c1" cx="50%" cy="50%" r="28px">&nbsp;</circle>
-        <circle class="c2" cx="50%" cy="50%" r="28px">&nbsp;</circle>
+      <svg xmlns="http://www.w3.org/2000/svg" version="1.1" x="0px" y="0px" viewBox="0 0 100 100" height="100px" width="100px">
+        <g style="stroke-width:.5rem;fill:none;stroke-linecap:round;">&nbsp;
+          <circle class="c1" cx="50%" cy="50%" r="28px">&nbsp;</circle>
+          <circle class="c2" cx="50%" cy="50%" r="28px">&nbsp;</circle>
+          &nbsp;
+        </g>
         &nbsp;
-      </g>
-      &nbsp;
       </svg>
-    </div>`
+    </span>`
 
     const editor = this.mceInstance()
     editor.undoManager.ignore(() => {
@@ -475,7 +494,7 @@ class RCEWrapper extends React.Component {
       return this.editor
     }
     const editors = this.props.tinymce.editors || []
-    return editors.filter(ed => ed.id === this.props.textareaId)[0]
+    return editors.filter((ed) => ed.id === this.props.textareaId)[0]
   }
 
   onTinyMCEInstance(command, args) {
@@ -512,11 +531,71 @@ class RCEWrapper extends React.Component {
     return this.state.id
   }
 
-  toggleView = () => {
-    if (this.isHidden()) {
-      this.setState({isHtmlView: false})
-    } else {
-      this.setState({isHtmlView: true})
+  toggleView = (newView) => {
+    // coming from the menubar, we don't have a newView,
+
+    const wasFullscreen = this._isFullscreen()
+    if (wasFullscreen) this._exitFullscreen()
+    let newState
+    switch (this.state.editorView) {
+      case WYSIWYG_VIEW:
+        if (this.props.use_rce_pretty_html_editor) {
+          newState = {editorView: newView || PRETTY_HTML_EDITOR_VIEW}
+        } else {
+          newState = {editorView: RAW_HTML_EDITOR_VIEW}
+        }
+        break
+      case PRETTY_HTML_EDITOR_VIEW:
+        newState = {editorView: newView || WYSIWYG_VIEW}
+        break
+      case RAW_HTML_EDITOR_VIEW:
+        newState = {editorView: newView || WYSIWYG_VIEW}
+    }
+    this.setState(newState, () => {
+      if (wasFullscreen) {
+        window.setTimeout(() => {
+          this._enterFullscreen()
+        }, 200) // due to the animation it takes some time for fullscreen to complete
+      }
+    })
+  }
+
+  _isFullscreen() {
+    return this.state.fullscreenState.isTinyFullscreen || document[FS_ELEMENT]
+  }
+
+  _enterFullscreen() {
+    switch (this.state.editorView) {
+      case PRETTY_HTML_EDITOR_VIEW:
+        this._prettyHtmlEditorRef.current.addEventListener(
+          'fullscreenchange',
+          this._toggleFullscreen
+        )
+        this._prettyHtmlEditorRef.current.addEventListener(
+          'webkitfullscreenchange',
+          this._toggleFullscreen
+        )
+        // if I don't focus first, FF complains that the element
+        // is not in the active browser tab and requestFullscreen fails
+        this._prettyHtmlEditorRef.current.focus()
+        this._prettyHtmlEditorRef.current[FS_REQUEST]()
+        break
+      case RAW_HTML_EDITOR_VIEW:
+        this.getTextarea().addEventListener('fullscreenchange', this._toggleFullscreen)
+        this.getTextarea().addEventListener('webkitfullscreenchange', this._toggleFullscreen)
+        this.getTextarea()[FS_REQUEST]()
+        break
+      case WYSIWYG_VIEW:
+        this.mceInstance().execCommand('mceFullScreen')
+        break
+    }
+  }
+
+  _exitFullscreen() {
+    if (this.state.fullscreenState.isTinyFullscreen) {
+      this.mceInstance().execCommand('mceFullScreen')
+    } else if (document[FS_ELEMENT]) {
+      document[FS_ELEMENT][FS_EXIT]()
     }
   }
 
@@ -524,7 +603,33 @@ class RCEWrapper extends React.Component {
     this.onTinyMCEInstance('mceFocus')
   }
 
+  focusCurrentView() {
+    switch (this.state.editorView) {
+      case WYSIWYG_VIEW:
+        this.focus()
+        break
+      case PRETTY_HTML_EDITOR_VIEW:
+        {
+          const cmta = this._elementRef.current.querySelector('.CodeMirror textarea')
+          if (cmta) {
+            cmta.focus()
+          } else {
+            window.setTimeout(() => {
+              this._elementRef.current.querySelector('.CodeMirror textarea')?.focus()
+            }, 200)
+          }
+        }
+        break
+      case RAW_HTML_EDITOR_VIEW:
+        this.getTextarea().focus()
+        break
+    }
+  }
+
   is_dirty() {
+    if (this.mceInstance().isDirty()) {
+      return true
+    }
     const content = this.isHidden() ? this.textareaValue() : this.mceInstance().getContent()
     return content !== this.cleanInitialContent()
   }
@@ -537,6 +642,10 @@ class RCEWrapper extends React.Component {
       this._cleanInitialContent = serializer.serialize(el, {getInner: true})
     }
     return this._cleanInitialContent
+  }
+
+  isHtmlView() {
+    return this.state.editorView !== WYSIWYG_VIEW
   }
 
   isHidden() {
@@ -556,7 +665,6 @@ class RCEWrapper extends React.Component {
   handleFocus(_event) {
     if (!this.focused) {
       bridge.focusEditor(this)
-      this._forceCloseFloatingToolbar()
       this.props.onFocus && this.props.onFocus(this)
     }
   }
@@ -584,13 +692,16 @@ class RCEWrapper extends React.Component {
           return
         }
 
-        if (this._elementRef && this._elementRef.contains(document.activeElement)) {
+        if (this._elementRef.current?.contains(document.activeElement)) {
           // focus is still somewhere w/in me
           return
         }
 
         const activeClass = document.activeElement && document.activeElement.getAttribute('class')
-        if (event.target.id === event.focusedEditor?.id && activeClass?.includes('tox-')) {
+        if (
+          (event.focusedEditor === undefined || event.target.id === event.focusedEditor?.id) &&
+          activeClass?.includes('tox-')
+        ) {
           // if a toolbar button has focus, then the user clicks on the "more" button
           // focus jumps to the body, then eventually to the popped up toolbar. This
           // catches that case.
@@ -614,17 +725,17 @@ class RCEWrapper extends React.Component {
     }
   }
 
-  handleFocusRCE = event => {
+  handleFocusRCE = (event) => {
     this.handleFocus(event)
   }
 
-  handleBlurRCE = event => {
+  handleBlurRCE = (event) => {
     if (event.relatedTarget === null) {
       // focus might be moving to tinymce
       this.handleBlur(event)
     }
 
-    if (!this._elementRef.contains(event.relatedTarget)) {
+    if (!this._elementRef.current?.contains(event.relatedTarget)) {
       this.handleBlur(event)
     }
   }
@@ -636,6 +747,12 @@ class RCEWrapper extends React.Component {
     const ifr = this.iframe
     ifr && ifr.parentElement.classList.add('active')
 
+    this._forceCloseFloatingToolbar()
+    this.handleFocus(event)
+  }
+
+  handleFocusHtmlEditor = (event) => {
+    this._elementRef.current.querySelector('.CodeMirror')?.CodeMirror.setCursor(0, 0)
     this.handleFocus(event)
   }
 
@@ -654,23 +771,22 @@ class RCEWrapper extends React.Component {
     return this[methodName](...args)
   }
 
-  handleKey = event => {
+  handleKey = (event) => {
     if (event.code === 'F9' && event.altKey) {
       event.preventDefault()
       event.stopPropagation()
-      focusFirstMenuButton(this._elementRef)
+      focusFirstMenuButton(this._elementRef.current)
     } else if (event.code === 'F10' && event.altKey) {
       event.preventDefault()
       event.stopPropagation()
-      focusToolbar(this._elementRef)
+      focusToolbar(this._elementRef.current)
     } else if ((event.code === 'F8' || event.code === 'Digit0') && event.altKey) {
       event.preventDefault()
       event.stopPropagation()
       this.openKBShortcutModal()
     } else if (event.code === 'Escape') {
-      // ESC
       this._forceCloseFloatingToolbar()
-      if (this._fullscreenState.isFullscreen) {
+      if (this.state.fullscreenState.isTinyFullscreen) {
         this.mceInstance().execCommand('mceFullScreen') // turn it off
       } else {
         bridge.hideTrays()
@@ -679,29 +795,45 @@ class RCEWrapper extends React.Component {
   }
 
   handleClickFullscreen = () => {
-    if (!this.state.isHtmlView) {
-      this.mceInstance().execCommand('mceFullScreen')
+    if (this._isFullscreen()) {
+      this._exitFullscreen()
+    } else {
+      this._enterFullscreen()
     }
+  }
+
+  handleExternalClick = () => {
+    this._forceCloseFloatingToolbar()
   }
 
   onInit = (_event, editor) => {
     editor.rceWrapper = this
     this.editor = editor
 
+    // Capture click events outside the iframe
+    document.addEventListener('click', this.handleExternalClick)
+
     if (document.body.classList.contains('Underline-All-Links__enabled')) {
       this.iframe.contentDocument.body.classList.add('Underline-All-Links__enabled')
     }
     editor.on('wordCountUpdate', this.onWordCountUpdate)
-    // and an aria-label to the application div that wraps RCE
+    // add an aria-label to the application div that wraps RCE
+    // and change role from "application" to "document" to ensure
+    // the editor gets properly picked up by screen readers
     const tinyapp = document.querySelector('.tox-tinymce[role="application"]')
     if (tinyapp) {
       tinyapp.setAttribute('aria-label', formatMessage('Rich Content Editor'))
+      tinyapp.setAttribute('role', 'document')
     }
     // Probably should do this in tinymce.scss, but we only want it in new rce
     this.getTextarea().style.resize = 'none'
     editor.on('ExecCommand', this._forceCloseFloatingToolbar)
     editor.on('keydown', this.handleKey)
     editor.on('FullscreenStateChanged', this._toggleFullscreen)
+    // This propagates click events on the editor out of the iframe to the parent
+    // document. We need this so that click events get captured properly by instui
+    // focus-trapping components, so they properly ignore trapping focus on click.
+    editor.on('click', () => window.top.document.body.click(), true)
 
     this.announceContextToolbars(editor)
 
@@ -710,28 +842,60 @@ class RCEWrapper extends React.Component {
     }
   }
 
-  _fullscreenState = {
-    headerDisp: 'static',
-    isFullscreen: false
-  }
-
-  _toggleFullscreen = event => {
+  _toggleFullscreen = (event) => {
     const header = document.getElementById('header')
     if (header) {
       if (event.state) {
-        this._fullscreenState.headerDisp = header.style.display
-        this._fullscreenState.isFullscreen = true
+        this.setState({
+          fullscreenState: {
+            headerDisp: header.style.display,
+            isTinyFullscreen: true,
+          },
+        })
         header.style.display = 'none'
       } else {
-        header.style.display = this._fullscreenState.headerDisp
-        this._fullscreenState.isFullscreen = false
+        header.style.display = this.state.fullscreenState.headerDisp
+        this.setState({
+          fullscreenState: {
+            isTinyFullscreen: false,
+          },
+        })
       }
     }
+
+    // if we're leaving fullscreen, remove event listeners on the fullscreen element
+    if (!document[FS_ELEMENT] && this.state.fullscreenElem) {
+      this.state.fullscreenElem.removeEventListener('fullscreenchange', this._toggleFullscreen)
+      this.state.fullscreenElem.removeEventListener(
+        'webkitfullscreenchange',
+        this._toggleFullscreen
+      )
+      this.setState({
+        fullscreenState: {
+          fullscreenElem: null,
+        },
+      })
+    }
+
+    // if we don't defer setState, the pretty editor's height isn't correct
+    window.setTimeout(() => {
+      if (document[FS_ELEMENT]) {
+        this.setState((state) => {
+          return {
+            fullscreenState: {
+              ...state.fullscreenState,
+              fullscreenElem: document[FS_ELEMENT],
+            },
+          }
+        })
+      }
+      this.focusCurrentView()
+    }, 0)
   }
 
   _forceCloseFloatingToolbar = () => {
-    if (this._elementRef) {
-      const moreButton = this._elementRef.querySelector(
+    if (this._elementRef.current) {
+      const moreButton = this._elementRef.current.querySelector(
         '.tox-toolbar-overlord .tox-toolbar__group:last-child button:last-child'
       )
       if (moreButton?.getAttribute('aria-owns')) {
@@ -752,8 +916,8 @@ class RCEWrapper extends React.Component {
         if (this.announcing !== 1) {
           this.setState({
             announcement: formatMessage('type Control F9 to access image options. {text}', {
-              text: node.getAttribute('alt')
-            })
+              text: node.getAttribute('alt'),
+            }),
           })
           this.announcing = 1
         }
@@ -761,8 +925,8 @@ class RCEWrapper extends React.Component {
         if (this.announcing !== 2) {
           this.setState({
             announcement: formatMessage('type Control F9 to access link options. {text}', {
-              text: node.textContent
-            })
+              text: node.textContent,
+            }),
           })
           this.announcing = 2
         }
@@ -770,14 +934,14 @@ class RCEWrapper extends React.Component {
         if (this.announcing !== 3) {
           this.setState({
             announcement: formatMessage('type Control F9 to access table options. {text}', {
-              text: node.textContent
-            })
+              text: node.textContent,
+            }),
           })
           this.announcing = 3
         }
       } else {
         this.setState({
-          announcement: null
+          announcement: null,
         })
         this.announcing = 0
       }
@@ -785,7 +949,7 @@ class RCEWrapper extends React.Component {
   }
 
   /* ********** autosave support *************** */
-  initAutoSave = editor => {
+  initAutoSave = (editor) => {
     this.storage = window.localStorage
     if (this.storage) {
       editor.on('change', this.doAutoSave)
@@ -808,7 +972,7 @@ class RCEWrapper extends React.Component {
           if (autosavedContent !== editorContent) {
             this.setState({
               confirmAutoSave: true,
-              autoSavedContent: this.patchAutosavedContent(autosaved.content)
+              autoSavedContent: this.patchAutosavedContent(autosaved.content),
             })
           } else {
             this.storage.removeItem(this.autoSaveKey)
@@ -842,7 +1006,7 @@ class RCEWrapper extends React.Component {
     }
   }
 
-  restoreAutoSave = ans => {
+  restoreAutoSave = (ans) => {
     this.setState({confirmAutoSave: false}, () => {
       const editor = this.mceInstance()
       if (ans) {
@@ -859,7 +1023,7 @@ class RCEWrapper extends React.Component {
   patchAutosavedContent(content, asText) {
     const temp = document.createElement('div')
     temp.innerHTML = content
-    temp.querySelectorAll('[data-placeholder-for]').forEach(placeholder => {
+    temp.querySelectorAll('[data-placeholder-for]').forEach((placeholder) => {
       placeholder.parentElement.removeChild(placeholder)
     })
     if (asText) return temp.textContent
@@ -894,7 +1058,7 @@ class RCEWrapper extends React.Component {
   }
 
   get autoSaveKey() {
-    return `rceautosave:${window.location.href}:${this._textareaEl.id}`
+    return `rceautosave:${window.location.href}:${this.getTextarea().id}`
   }
 
   doAutoSave = (e, retry = false) => {
@@ -911,7 +1075,7 @@ class RCEWrapper extends React.Component {
           this.autoSaveKey,
           JSON.stringify({
             autosaveTimestamp: Date.now(),
-            content
+            content,
           })
         )
       } catch (ex) {
@@ -928,24 +1092,24 @@ class RCEWrapper extends React.Component {
   }
   /* *********** end autosave support *************** */
 
-  onWordCountUpdate = e => {
-    this.setState(state => {
+  onWordCountUpdate = (e) => {
+    this.setState((state) => {
       if (e.wordCount.words !== state.wordCount) {
         return {wordCount: e.wordCount.words}
       } else return null
     })
   }
 
-  onNodeChange = e => {
+  onNodeChange = (e) => {
     // This is basically copied out of the tinymce silver theme code for the status bar
     const path = e.parents
       .filter(
-        p =>
+        (p) =>
           p.nodeName !== 'BR' &&
           !p.getAttribute('data-mce-bogus') &&
           p.getAttribute('data-mce-type') !== 'bookmark'
       )
-      .map(p => p.nodeName.toLowerCase())
+      .map((p) => p.nodeName.toLowerCase())
       .reverse()
     this.setState({path})
   }
@@ -961,6 +1125,7 @@ class RCEWrapper extends React.Component {
       const newHeight = `${modifiedHeight}px`
       container.style.height = newHeight
       this.getTextarea().style.height = newHeight
+      this.setState({height: newHeight})
       // play nice and send the same event that the silver theme would send
       editor.fire('ResizeEditor')
     }
@@ -973,7 +1138,7 @@ class RCEWrapper extends React.Component {
   openKBShortcutModal = () => {
     this.setState({
       KBShortcutModalOpen: true,
-      KBShortcutFocusReturn: document.activeElement
+      KBShortcutFocusReturn: document.activeElement,
     })
   }
 
@@ -997,15 +1162,15 @@ class RCEWrapper extends React.Component {
     if (!this._destroyCalled) {
       this.destroy()
     }
-    this._elementRef.removeEventListener('keydown', this.handleKey, true)
+    this._elementRef.current.removeEventListener('keydown', this.handleKey, true)
     this.observer.disconnect()
   }
 
   // Get top 2 favorited LTI Tools
   ltiToolFavorites =
     window.INST?.editorButtons
-      .filter(e => e.favorite)
-      .map(e => `instructure_external_button_${e.id}`)
+      .filter((e) => e.favorite)
+      .map((e) => `instructure_external_button_${e.id}`)
       .slice(0, 2) || []
 
   wrapOptions(options = {}) {
@@ -1026,15 +1191,15 @@ class RCEWrapper extends React.Component {
         `${formatMessage('Heading 3')}=h3`,
         `${formatMessage('Heading 4')}=h4`,
         `${formatMessage('Preformatted')}=pre`,
-        `${formatMessage('Paragraph')}=p`
+        `${formatMessage('Paragraph')}=p`,
       ].join('; '),
 
-      setup: editor => {
+      setup: (editor) => {
         addKebabIcon(editor)
         editorWrappers.set(editor, this)
         const trayPropsWithColor = {
           brandColor: this.theme.canvasBrandColor,
-          ...this.props.trayProps
+          ...this.props.trayProps,
         }
         bridge.trayProps.set(editor, trayPropsWithColor)
         bridge.languages = this.props.languages
@@ -1052,7 +1217,7 @@ class RCEWrapper extends React.Component {
       toolbar: [
         {
           name: formatMessage('Styles'),
-          items: ['fontsizeselect', 'formatselect']
+          items: ['fontsizeselect', 'formatselect'],
         },
         {
           name: formatMessage('Formatting'),
@@ -1063,29 +1228,29 @@ class RCEWrapper extends React.Component {
             'forecolor',
             'backcolor',
             'inst_subscript',
-            'inst_superscript'
-          ]
+            'inst_superscript',
+          ],
         },
         {
           name: formatMessage('Content'),
-          items: canvasPlugins
+          items: canvasPlugins,
         },
         {
           name: formatMessage('External Tools'),
-          items: [...this.ltiToolFavorites, 'lti_tool_dropdown', 'lti_mru_button']
+          items: [...this.ltiToolFavorites, 'lti_tool_dropdown', 'lti_mru_button'],
         },
         {
           name: formatMessage('Alignment and Lists'),
-          items: ['align', 'bullist', 'inst_indent', 'inst_outdent']
+          items: ['align', 'bullist', 'inst_indent', 'inst_outdent'],
         },
         {
           name: formatMessage('Miscellaneous'),
-          items: ['removeformat', 'table', 'instructure_equation', 'instructure_media_embed']
-        }
+          items: ['removeformat', 'table', 'instructure_equation', 'instructure_media_embed'],
+        },
       ],
       contextmenu: '', // show the browser's native context menu
 
-      toolbar_drawer: 'floating',
+      toolbar_mode: 'floating',
       toolbar_sticky: true,
 
       // tiny's external link create/edit dialog config
@@ -1095,8 +1260,8 @@ class RCEWrapper extends React.Component {
 
       canvas_rce_user_context: {
         type: this.props.trayProps.contextType,
-        id: this.props.trayProps.contextId
-      }
+        id: this.props.trayProps.contextId,
+      },
     }
   }
 
@@ -1131,7 +1296,7 @@ class RCEWrapper extends React.Component {
 
   componentDidMount() {
     this.registerTextareaChange()
-    this._elementRef.addEventListener('keydown', this.handleKey, true)
+    this._elementRef.current.addEventListener('keydown', this.handleKey, true)
     // give the textarea its initial size
     this.onResize(null, {deltaY: 0})
     // Preload the LTI Tools modal
@@ -1148,51 +1313,61 @@ class RCEWrapper extends React.Component {
     const portals = document.querySelectorAll('.tox-tinymce-aux')
     // my portal will be the last one in the doc because tinyumce appends them
     const tinymce_floating_toolbar_portal = portals[portals.length - 1]
-    this.observer = new MutationObserver((mutationList, _observer) => {
-      mutationList.forEach(mutation => {
-        if (mutation.type === 'childList') {
-          this.handleFocusEditor(new FocusEvent('focus', {target: mutation.target}))
-        }
+    if (tinymce_floating_toolbar_portal) {
+      this.observer = new MutationObserver((mutationList, _observer) => {
+        mutationList.forEach((mutation) => {
+          if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
+            this.handleFocusEditor(new FocusEvent('focus', {target: mutation.target}))
+          }
+        })
       })
-    })
-    this.observer.observe(tinymce_floating_toolbar_portal, {childList: true})
+      this.observer.observe(tinymce_floating_toolbar_portal, {childList: true})
+    }
+    this.setEditorView(this.state.editorView)
   }
 
   componentDidUpdate(_prevProps, prevState) {
-    const {...mceProps} = this.props
     this.registerTextareaChange()
-    if (prevState.isHtmlView !== this.state.isHtmlView) {
-      if (this.state.isHtmlView) {
-        this.getTextarea().removeAttribute('aria-hidden')
-        // Also make the label visible
-        this.getTextarea().labels?.[0]?.removeAttribute('aria-hidden')
-
-        this.mceInstance().hide()
-        document.getElementById(mceProps.textareaId).focus()
-      } else {
-        this.setCode(this.textareaValue())
-        this.getTextarea().setAttribute('aria-hidden', true)
-        // Also make the label hidden
-        this.getTextarea().labels?.[0]?.setAttribute('aria-hidden', true)
-
-        this.mceInstance().show()
-        this.mceInstance().focus()
-      }
+    if (prevState.editorView !== this.state.editorView) {
+      this.setEditorView(this.state.editorView)
+      this.focusCurrentView()
     }
   }
 
-  addAlert = alert => {
+  setEditorView(view) {
+    switch (view) {
+      case RAW_HTML_EDITOR_VIEW:
+        this.getTextarea().removeAttribute('aria-hidden')
+        this.getTextarea().labels?.[0]?.removeAttribute('aria-hidden')
+        this.mceInstance().hide()
+        break
+      case PRETTY_HTML_EDITOR_VIEW:
+        this.getTextarea().setAttribute('aria-hidden', true)
+        this.getTextarea().labels?.[0]?.setAttribute('aria-hidden', true)
+        this.mceInstance().undoManager.add() // all changes in html vidw are 1 undo
+        this.mceInstance().hide()
+        this._elementRef.current.querySelector('.CodeMirror')?.CodeMirror.setCursor(0, 0)
+        break
+      case WYSIWYG_VIEW:
+        this.setCode(this.textareaValue())
+        this.getTextarea().setAttribute('aria-hidden', true)
+        this.getTextarea().labels?.[0]?.setAttribute('aria-hidden', true)
+        this.mceInstance().show()
+    }
+  }
+
+  addAlert = (alert) => {
     alert.id = alertIdValue++
-    this.setState(state => {
+    this.setState((state) => {
       let messages = state.messages.concat(alert)
       messages = uniqBy(messages, 'text') // Don't show the same message twice
       return {messages}
     })
   }
 
-  removeAlert = messageId => {
-    this.setState(state => {
-      const messages = state.messages.filter(message => message.id !== messageId)
+  removeAlert = (messageId) => {
+    this.setState((state) => {
+      const messages = state.messages.filter((message) => message.id !== messageId)
       return {messages}
     })
   }
@@ -1207,6 +1382,40 @@ class RCEWrapper extends React.Component {
     alertIdValue = 0
   }
 
+  renderHtmlEditor() {
+    if (!this.props.use_rce_pretty_html_editor) return null
+
+    // the div keeps the editor from collapsing while the code editor is downloaded
+    return (
+      <Suspense
+        fallback={
+          <div
+            style={{
+              height: this.state.height,
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+            }}
+          >
+            <Spinner renderTitle={renderLoading} size="medium" />
+          </div>
+        }
+      >
+        <View as="div" borderRadius="medium" borderWidth="small">
+          <RceHtmlEditor
+            ref={this._prettyHtmlEditorRef}
+            height={document[FS_ELEMENT] ? `${window.screen.height}px` : this.state.height}
+            code={this.mceInstance().getContent({format: 'html'})}
+            onChange={(value) => {
+              this.getTextarea().value = value
+            }}
+            onFocus={this.handleFocusHtmlEditor}
+          />
+        </View>
+      </Suspense>
+    )
+  }
+
   render() {
     const {trayProps, ...mceProps} = this.props
 
@@ -1214,7 +1423,7 @@ class RCEWrapper extends React.Component {
       <div
         key={this.id}
         className={`${styles.root} rce-wrapper`}
-        ref={el => (this._elementRef = el)}
+        ref={this._elementRef}
         onFocus={this.handleFocusRCE}
         onBlur={this.handleBlurRCE}
       >
@@ -1223,9 +1432,9 @@ class RCEWrapper extends React.Component {
             variant: 'link',
             onClick: this.openKBShortcutModal,
             icon: IconKeyboardShortcutsLine,
-            margin: 'xx-small'
+            margin: 'xx-small',
           }}
-          ref={el => (this._showOnFocusButton = el)}
+          ref={(el) => (this._showOnFocusButton = el)}
         >
           <ScreenReaderContent>{formatMessage('View keyboard shortcuts')}</ScreenReaderContent>
         </ShowOnFocusButton>
@@ -1234,29 +1443,35 @@ class RCEWrapper extends React.Component {
           liveRegion={trayProps.liveRegion}
           afterDismiss={this.removeAlert}
         />
-        <Editor
-          id={mceProps.textareaId}
-          textareaName={mceProps.name}
-          init={this.wrapOptions(mceProps.editorOptions)}
-          initialValue={mceProps.defaultContent}
-          onInit={this.onInit}
-          onClick={this.handleFocusEditor}
-          onKeypress={this.handleFocusEditor}
-          onActivate={this.handleFocusEditor}
-          onRemove={this.onRemove}
-          onFocus={this.handleFocusEditor}
-          onBlur={this.handleBlurEditor}
-          onNodeChange={this.onNodeChange}
-        />
+        {this.state.editorView === PRETTY_HTML_EDITOR_VIEW && this.renderHtmlEditor()}
+        <div
+          style={{display: this.state.editorView === PRETTY_HTML_EDITOR_VIEW ? 'none' : 'block'}}
+        >
+          <Editor
+            id={mceProps.textareaId}
+            textareaName={mceProps.name}
+            init={this.wrapOptions(mceProps.editorOptions)}
+            initialValue={mceProps.defaultContent}
+            onInit={this.onInit}
+            onClick={this.handleFocusEditor}
+            onKeypress={this.handleFocusEditor}
+            onActivate={this.handleFocusEditor}
+            onRemove={this.onRemove}
+            onFocus={this.handleFocusEditor}
+            onBlur={this.handleBlurEditor}
+            onNodeChange={this.onNodeChange}
+          />
+        </div>
         <StatusBar
-          onToggleHtml={this.toggleView}
+          onChangeView={(newView) => this.toggleView(newView)}
           path={this.state.path}
           wordCount={this.state.wordCount}
-          isHtmlView={this.state.isHtmlView}
+          editorView={this.state.editorView}
           onResize={this.onResize}
           onKBShortcutModalOpen={this.openKBShortcutModal}
           onA11yChecker={this.onA11yChecker}
           onFullscreen={this.handleClickFullscreen}
+          use_rce_pretty_html_editor={this.props.use_rce_pretty_html_editor}
         />
         <CanvasContentTray
           key={this.id}

@@ -83,6 +83,7 @@ import {IconSettingsSolid} from '@instructure/ui-icons'
 import {ScreenReaderContent} from '@instructure/ui-a11y'
 import * as FlashAlert from 'jsx/shared/FlashAlert'
 import {deferPromise} from 'jsx/shared/async'
+import {showConfirmationDialog} from 'jsx/shared/ConfirmationDialog'
 import 'jquery.ajaxJSON'
 import 'jquery.instructure_date_and_time'
 import 'jqueryui/dialog'
@@ -341,6 +342,7 @@ class Gradebook {
     this.initShowUnpublishedAssignments = this.initShowUnpublishedAssignments.bind(this)
     this.toggleUnpublishedAssignments = this.toggleUnpublishedAssignments.bind(this)
     this.toggleViewUngradedAsZero = this.toggleViewUngradedAsZero.bind(this)
+    this.confirmViewUngradedAsZero = this.confirmViewUngradedAsZero.bind(this)
     this.setAssignmentsLoaded = this.setAssignmentsLoaded.bind(this)
     this.setAssignmentGroupsLoaded = this.setAssignmentGroupsLoaded.bind(this)
     this.setContextModulesLoaded = this.setContextModulesLoaded.bind(this)
@@ -451,7 +453,8 @@ class Gradebook {
     if (this.options.dataloader_improvements) {
       this.dataLoader = new DataLoader({
         gradebook: this,
-        performanceControls: new PerformanceControls(camelize(this.options.performance_controls))
+        performanceControls: new PerformanceControls(camelize(this.options.performance_controls)),
+        loadAssignmentsByGradingPeriod: this.options.load_assignments_by_grading_period_enabled
       })
     } else {
       this.dataLoader = new OldDataLoader(this)
@@ -777,12 +780,16 @@ class Gradebook {
         this.assignmentGroups[group.id] = group
       }
 
+      group.assignments = group.assignments || []
       assignmentGroup.assignments.forEach(assignment => {
         assignment.assignment_group = group
         assignment.due_at = tz.parse(assignment.due_at)
         this.updateAssignmentEffectiveDueDates(assignment)
         this.addAssignmentColumnDefinition(assignment)
         this.assignments[assignment.id] = assignment
+        if (!group.assignments.some(a => a.id === assignment.id)) {
+          group.assignments.push(assignment)
+        }
       })
     })
   }
@@ -820,10 +827,15 @@ class Gradebook {
   }
 
   gotChunkOfStudents(students) {
-    let isStudentView, j, len, student
     this.courseContent.assignmentStudentVisibility = {}
-    const escapeStudentContent = student2 => {
-      const escapedStudent = htmlEscape(student2)
+    const escapeStudentContent = student => {
+      const unescapedName = student.name
+      const unescapedSortableName = student.sortable_name
+
+      const escapedStudent = htmlEscape(student)
+      escapedStudent.name = unescapedName
+      escapedStudent.sortable_name = unescapedSortableName
+
       escapedStudent?.enrollments.forEach(enrollment => {
         const gradesUrl = enrollment?.grades?.html_url
         if (gradesUrl) {
@@ -832,15 +844,14 @@ class Gradebook {
       })
       return escapedStudent
     }
-    for (j = 0, len = students.length; j < len; j++) {
-      student = students[j]
+    students.forEach(student => {
       student.enrollments = _.filter(student.enrollments, function(e) {
         return e.type === 'StudentEnrollment' || e.type === 'StudentViewEnrollment'
       })
-      isStudentView = student.enrollments[0].type === 'StudentViewEnrollment'
       student.sections = student.enrollments.map(function(e) {
         return e.course_section_id
       })
+      const isStudentView = student.enrollments[0].type === 'StudentViewEnrollment'
       if (isStudentView) {
         this.studentViewStudents[student.id] = escapeStudentContent(student)
       } else {
@@ -856,7 +867,7 @@ class Gradebook {
       })
       student.cssClass = `student_${student.id}`
       this.updateStudentRow(student)
-    }
+    })
     this.gridReady.then(() => {
       return this.setupGrading(students)
     })
@@ -1449,6 +1460,7 @@ class Gradebook {
       this.submissionsForStudent(student),
       this.assignmentGroups,
       this.options.group_weighting_scheme,
+      this.options.grade_calc_ignore_unposted_anonymous_enabled,
       hasGradingPeriods ? this.gradingPeriodSet : undefined,
       hasGradingPeriods
         ? EffectiveDueDates.scopeToUser(this.effectiveDueDates, student.id)
@@ -1980,7 +1992,7 @@ class Gradebook {
       onSelectShowStatusesModal: () => {
         return this.statusesModal.open()
       },
-      onSelectViewUngradedAsZero: this.toggleViewUngradedAsZero,
+      onSelectViewUngradedAsZero: this.confirmViewUngradedAsZero,
       viewUngradedAsZero: this.gridDisplaySettings.viewUngradedAsZero,
       allowViewUngradedAsZero: this.courseFeatures.allowViewUngradedAsZero
     }
@@ -2873,7 +2885,9 @@ class Gradebook {
     if (!(this.contentLoadStates.submissionsLoaded && this.assignmentsLoadedForCurrentView())) {
       return []
     }
-    return Object.values(this.assignments).filter(assignment => {
+
+    const assignmentsToConsider = this.filterAssignments(Object.values(this.assignments))
+    return assignmentsToConsider.filter(assignment => {
       const submission = this.getSubmission(studentId, assignment.id)
       // Ignore anonymous assignments when deciding whether to show the
       // "hidden" icon, as including them could reveal which students have
@@ -3494,6 +3508,27 @@ class Gradebook {
       () => {},
       toggleableAction
     ) // on success, do nothing since the render happened earlier
+  }
+
+  confirmViewUngradedAsZero() {
+    const showDialog = () =>
+      showConfirmationDialog({
+        body: I18n.t(
+          'This setting only affects your view of student grades and displays grades as if all ungraded assignments were given a score of zero. This setting is a visual change only and does not affect grades for students or other users of this Gradebook. When this setting is enabled, Canvas will not populate zeros in the Gradebook for student submissions within individual assignments. Only the assignment groups and total columns will automatically factor scores of zero into the overall percentages for each student.'
+        ),
+        confirmText: I18n.t('OK'),
+        label: I18n.t('View Ungraded as Zero')
+      })
+
+    const confirmationPromise = this.gridDisplaySettings.viewUngradedAsZero
+      ? Promise.resolve(true)
+      : showDialog()
+
+    return confirmationPromise.then(userAccepted => {
+      if (userAccepted) {
+        this.toggleViewUngradedAsZero()
+      }
+    })
   }
 
   toggleViewUngradedAsZero() {

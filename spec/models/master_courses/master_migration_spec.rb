@@ -311,6 +311,56 @@ describe MasterCourses::MasterMigration do
       expect(@page2_to.title).to eq @page2.title
     end
 
+    context 'when in the blueprint course a file gets replaced' do
+      let(:child_course) { course_factory }
+      let(:master_course) { @copy_from }
+      let(:master_template) { @template }
+      let(:file_name) { 'filename' }
+      let(:attachment_attributes) do
+        { :filename => file_name, :uploaded_data => default_uploaded_data }
+      end
+      let(:master_attachments) { master_course.reload.attachments.map{ |a| [a.display_name, a.file_state] } }
+      let(:child_attachments) { child_course.reload.attachments.map{ |a| [a.display_name, a.file_state] } }
+
+      before do
+        master_course.attachments.create!(attachment_attributes)
+        master_template.add_child_course!(child_course)
+        run_master_migration
+      end
+
+      context 'when the child course doesn\'t have a file with the same name' do
+        before do
+          Timecop.travel(1.minute.from_now) do
+            master_course.attachments.create!(attachment_attributes).handle_duplicates(:overwrite)
+            run_master_migration
+          end
+        end
+
+        it 'handles the replacements in both master and child course' do
+          expect(master_attachments).to match_array([[file_name, 'deleted'], [file_name, 'available']])
+          expect(child_attachments).to match_array([[file_name, 'deleted'], [file_name, 'available']])
+        end
+      end
+
+      context 'when the child course has a file with the same name' do
+        before do
+          Timecop.travel(1.minute.from_now) do
+            child_course.attachments.create!(attachment_attributes)
+            master_course.attachments.create!(attachment_attributes).handle_duplicates(:overwrite)
+            run_master_migration
+          end
+        end
+
+        it 'handles the replacement in the child course' do
+          expect(child_attachments).to match_array([
+            [file_name, 'deleted'],
+            [file_name, 'available'],
+            ["#{file_name}-1", 'available']
+          ])
+        end
+      end
+    end
+
     it "should sync deleted quiz questions (unless changed downstream)" do
       @copy_to = course_factory
       sub = @template.add_child_course!(@copy_to)
@@ -2518,6 +2568,38 @@ describe MasterCourses::MasterMigration do
       end
 
       expect(sub.reload.cached_due_date.to_i).to eq due_at.to_i
+    end
+
+    it "handles downstream changes of ungraded discussion dates correctly" do
+      date1 = 1.week.ago.at_noon
+      date2 = 2.weeks.ago.at_noon
+      copy_to = course_factory
+      sub = @template.add_child_course!(copy_to)
+      topic = @copy_from.discussion_topics.create!(lock_at: date1)
+      run_master_migration
+      topic_to = copy_to.discussion_topics.where(migration_id: mig_id(topic)).take
+
+      # ensure schedule_delayed_transitions does not cause a spurious downstream change record
+      expect(sub.child_content_tags.polymorphic_where(content: topic_to).take.downstream_changes).to eq([])
+
+      Timecop.travel(5.minutes.from_now) do
+        # now actually make a downstream change
+        topic.touch
+        topic_to.lock_at = date2
+        topic_to.save!
+        run_master_migration
+        expect(topic_to.reload.lock_at).to eq date2
+        expect(sub.child_content_tags.polymorphic_where(content: topic_to).take.downstream_changes).to eq(['lock_at'])
+      end
+
+      # lock the availability dates and ensure the downstream change is overwritten
+      Timecop.travel(10.minutes.from_now) do
+        @template.content_tag_for(topic).update_attribute(:restrictions, {:availability_dates => true})
+        topic.touch
+        run_master_migration
+        expect(sub.child_content_tags.polymorphic_where(content: topic_to).take.downstream_changes).to eq([])
+        expect(topic_to.reload.lock_at).to eq date1
+      end
     end
 
     context "attachment migration id preservation" do

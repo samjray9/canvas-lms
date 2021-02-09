@@ -226,6 +226,7 @@ module Api::V1::Assignment
         'external_data' => external_tool_tag.external_data
       }
       tool_attributes.merge!(external_tool_tag.attributes.slice('content_type', 'content_id')) if external_tool_tag.content_id
+      tool_attributes.merge!('custom' => assignment.primary_resource_link&.custom)
       hash['external_tool_tag_attributes'] = tool_attributes
       hash['url'] = sessionless_launch_url(@context,
                                            :launch_type => 'assessment',
@@ -266,7 +267,7 @@ module Api::V1::Assignment
     end
 
     unless opts[:exclude_response_fields].include?('rubric')
-      if assignment.rubric_association
+      if assignment.active_rubric_association?
         hash['use_rubric_for_grading'] = !!assignment.rubric_association.use_for_grading
         if assignment.rubric_association.rubric
           hash['free_form_criterion_comments'] = !!assignment.rubric_association.rubric.free_form_criterion_comments
@@ -499,12 +500,13 @@ module Api::V1::Assignment
     return :forbidden unless grading_periods_allow_submittable_create?(assignment, assignment_params)
 
     prepared_create = prepare_assignment_create_or_update(assignment, assignment_params, user, context)
+
     return false unless prepared_create[:valid]
 
     response = :created
 
     Assignment.suspend_due_date_caching do
-      assignment.quiz_lti! if assignment_params.key?(:quiz_lti)
+      assignment.quiz_lti! if assignment_params.key?(:quiz_lti) || assignment&.quiz_lti?
 
       response = if prepared_create[:overrides].present?
         create_api_assignment_with_overrides(prepared_create, user)
@@ -913,6 +915,9 @@ module Api::V1::Assignment
     updated_assignment = update_from_params(assignment, assignment_params, user, context)
     return invalid unless assignment_editable_fields_valid?(updated_assignment, user)
     return invalid unless assignment_final_grader_valid?(updated_assignment, context)
+
+    custom_params = assignment_params.dig(:external_tool_tag_attributes, :custom_params)
+    assignment.lti_resource_link_custom_params = custom_params if custom_params.present?
 
     {
       assignment: assignment,

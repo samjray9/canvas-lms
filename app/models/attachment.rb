@@ -23,6 +23,8 @@ require 'crocodoc'
 
 # See the uploads controller and views for examples on how to use this model.
 class Attachment < ActiveRecord::Base
+  class UniqueRenameFailure < StandardError; end
+
   self.ignored_columns = %i[last_lock_at last_unlock_at enrollment_id cached_s3_url s3_url_cached_at
       scribd_account_id scribd_user scribd_mime_type_id submitted_to_scribd_at scribd_doc scribd_attempts
       cached_scribd_thumbnail last_inline_view local_filename]
@@ -751,23 +753,33 @@ class Attachment < ActiveRecord::Base
 
     deleted_attachments = []
     if method == :rename
-      self.save! unless self.id
+      begin
+        self.save! unless self.id
 
-      valid_name = false
-      self.shard.activate do
-        while !valid_name
-          existing_names = self.folder.active_file_attachments.where("id <> ?", self.id).pluck(:display_name)
-          new_name = opts[:name] || self.display_name
-          self.display_name = Attachment.make_unique_filename(new_name, existing_names)
+        valid_name = false
+        self.shard.activate do
+          iter_count = 1
+          while !valid_name
+            existing_names = self.folder.active_file_attachments.where("id <> ?", self.id).pluck(:display_name)
+            new_name = opts[:name] || self.display_name
+            self.display_name = Attachment.make_unique_filename(new_name, existing_names, iter_count)
 
-          if Attachment.where("id = ? AND NOT EXISTS (?)", self,
-                              Attachment.where("id <> ? AND display_name = ? AND folder_id = ? AND file_state <> ?",
-                                self, display_name, folder_id, 'deleted')).
-              limit(1).
-              update_all(display_name: display_name) > 0
-            valid_name = true
+            if Attachment.where("id = ? AND NOT EXISTS (?)", self,
+                                Attachment.where("id <> ? AND display_name = ? AND folder_id = ? AND file_state <> ?",
+                                  self, display_name, folder_id, 'deleted')).
+                limit(1).
+                update_all(display_name: display_name) > 0
+              valid_name = true
+            end
+            iter_count += 1
+            raise UniqueRenameFailure if iter_count >= 10
           end
         end
+      rescue UniqueRenameFailure => e
+        Canvas::Errors.capture_exception(:attachment, e, :warn)
+        # Failed to uniquely rename attachment, slapping on a UUID and moving on
+        self.display_name = self.display_name + SecureRandom.uuid
+        Attachment.where("id = ?", self).limit(1).update_all(display_name: display_name)
       end
     elsif method == :overwrite && atts.any?
       shard.activate do
@@ -933,7 +945,7 @@ class Attachment < ActiveRecord::Base
     end
   rescue FailedResponse, Net::ReadTimeout, Net::OpenTimeout => e
     if (retries += 1) < Setting.get(:streaming_download_retries, '5').to_i
-      Canvas::Errors.capture_exception(:attachment, e)
+      Canvas::Errors.capture_exception(:attachment, e, :info)
       retry
     else
       raise e
@@ -1194,14 +1206,18 @@ class Attachment < ActiveRecord::Base
       "audio/3gpp" => "audio",
       "audio/x-aiff" => "audio",
       "audio/x-mpegurl" => "audio",
+      "audio/x-ms-wma" => "audio",
       "audio/x-pn-realaudio" => "audio",
       "audio/x-wav" => "audio",
       "audio/mp4" => "audio",
+      "audio/wav" => "audio",
       "audio/webm" => "audio",
       "video/mpeg" => "video",
       "video/quicktime" => "video",
       "video/x-la-asf" => "video",
       "video/x-ms-asf" => "video",
+      "video/x-ms-wma" => "video",
+      "video/x-ms-wmv" => "audio",
       "video/x-msvideo" => "video",
       "video/x-sgi-movie" => "video",
       "video/3gpp" => "video",
@@ -1217,37 +1233,77 @@ class Attachment < ActiveRecord::Base
   end
 
   def user_can_read_through_context?(user, session)
-    self.context.grants_right?(user, session, :read) ||
+    self.context&.grants_right?(user, session, :read) ||
       (self.context.is_a?(AssessmentQuestion) && self.context.user_can_see_through_quiz_question?(user, session))
   end
 
+  def context_root_account(user = nil)
+    # Granular Permissions
+    #
+    # The primary use case for this method is for accurately checking
+    # feature flag enablement, given a user and the calling context.
+    # We want to prefer finding the root_account through the context
+    # of the authorizing resource or fallback to the user's active
+    # pseudonym's residing account.
+    return self.context.account if self.context.is_a?(User)
+
+    self.context.try(:root_account) || user&.account
+  end
+
   set_policy do
-    given { |user, session|
-      self.context.grants_right?(user, session, :manage_files) &&
-        !self.associated_with_submission? &&
-        (!self.folder || self.folder.grants_right?(user, session, :manage_contents))
-    }
+    #################### Begin legacy permission block #########################
+
+    given do |user, session|
+      !context_root_account(user).feature_enabled?(:granular_permissions_course_files) &&
+      self.context&.grants_right?(user, session, :manage_files) &&
+      !self.associated_with_submission? &&
+      (!self.folder || self.folder.grants_right?(user, session, :manage_contents))
+    end
     can :delete and can :update
 
-    given { |user, session| self.context.grants_right?(user, session, :manage_files) }
+    given do |user, session|
+      !context_root_account(user).feature_enabled?(:granular_permissions_course_files) &&
+      self.context&.grants_right?(user, session, :manage_files)
+    end
+    can :read and can :create and can :download and can :read_as_admin
+
+    ##################### End legacy permission block ##########################
+
+    given do |user, session|
+      context_root_account(user).feature_enabled?(:granular_permissions_course_files) &&
+      self.context&.grants_right?(user, session, :manage_files_edit) &&
+      !self.associated_with_submission? &&
+      (!self.folder || self.folder.grants_right?(user, session, :manage_contents))
+    end
+    can :read and can :update
+
+    given do |user, session|
+      context_root_account(user).feature_enabled?(:granular_permissions_course_files) &&
+      self.context&.grants_right?(user, session, :manage_files_delete) &&
+      !self.associated_with_submission? &&
+      (!self.folder || self.folder.grants_right?(user, session, :manage_contents))
+    end
+    can :read and can :delete
+
+    given do |user, session|
+      context_root_account(user).feature_enabled?(:granular_permissions_course_files) &&
+      self.context&.grants_right?(user, session, :manage_files_add)
+    end
     can :read and can :create and can :download and can :read_as_admin
 
     given { self.public? }
     can :read and can :download
 
-    given { |user, session| self.context.grants_right?(user, session, :read) } #students.include? user }
+    given { |user, session| self.context&.grants_right?(user, session, :read) } #students.include? user }
     can :read
 
-    given { |user, session| self.context.grants_right?(user, session, :read_as_admin) }
+    given { |user, session| self.context&.grants_right?(user, session, :read_as_admin) }
     can :read_as_admin
 
     given { |user, session|
       user_can_read_through_context?(user, session) && !self.locked_for?(user, :check_policies => true)
     }
     can :read and can :download
-
-    given { |user, session| self.context_type == 'Submission' && self.context.grant_right?(user, session, :comment) }
-    can :create
 
     given { |user, session|
         session && session['file_access_user_id'].present? &&
@@ -1440,6 +1496,7 @@ class Attachment < ActiveRecord::Base
     self.shard.activate do
       att = self.root_attachment_id? ? self.root_attachment : self
       return true if Purgatory.where(attachment_id: att).active.exists?
+
       att.send_to_purgatory(deleted_by_user)
       att.destroy_content
       att.thumbnail&.destroy
@@ -1701,8 +1758,15 @@ class Attachment < ActiveRecord::Base
       update_attribute(:workflow_state, 'processing')
     end
   rescue => e
+    warnable_errors = [
+      Canvadocs::BadGateway,
+      Canvadoc::UploadTimeout,
+      Canvadocs::ServerError
+    ]
+    error_level = warnable_errors.any?{|kls| e.is_a?(kls) } ? :warn : :error
     update_attribute(:workflow_state, 'errored')
-    Canvas::Errors.capture(e, type: :canvadocs, attachment_id: id, annotatable: opts[:wants_annotation])
+    error_data = {type: :canvadocs, attachment_id: id, annotatable: opts[:wants_annotation]}
+    Canvas::Errors.capture(e, error_data, error_level)
 
     if attempt <= Setting.get('max_canvadocs_attempts', '5').to_i
       delay(n_strand: 'canvadocs_retries',
@@ -1833,6 +1897,7 @@ class Attachment < ActiveRecord::Base
 
   scope :uploadable, -> { where(:workflow_state => 'pending_upload') }
   scope :active, -> { where(:file_state => 'available') }
+  scope :deleted, -> { where(:file_state => 'deleted') }
   scope :by_display_name, -> { order(display_name_order_by_clause('attachments')) }
   scope :by_position_then_display_name, -> { order(:position, display_name_order_by_clause('attachments')) }
   def self.serialization_excludes; [:uuid, :namespace]; end
@@ -1841,22 +1906,25 @@ class Attachment < ActiveRecord::Base
   # filename that makes it unique. you can either pass existing_files as string
   # filenames, in which case it'll test against those, or a block that'll be
   # called repeatedly with a filename until it returns true.
-  def self.make_unique_filename(filename, existing_files = [], &block)
+  def self.make_unique_filename(filename, existing_files = [], attempts = 1, &block)
     unless block
       block = proc { |fname| !existing_files.include?(fname) }
     end
 
-    return filename if block.call(filename)
+    return filename if attempts <= 1 && block.call(filename)
 
     new_name = filename
-    addition = 1
+    addition = attempts || 1
     dir = File.dirname(filename)
     dir = dir == "." ? "" : "#{dir}/"
     extname = filename[/(\.[A-Za-z][A-Za-z0-9]*)*(\.[A-Za-z0-9]*)$/] || ''
     basename = File.basename(filename, extname)
 
+    random_backup_name = "#{dir}#{basename}-#{SecureRandom.uuid}#{extname}"
+    return random_backup_name if attempts >= 8
     until block.call(new_name = "#{dir}#{basename}-#{addition}#{extname}")
       addition += 1
+      return random_backup_name if addition >= 8
     end
     new_name
   end

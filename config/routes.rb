@@ -995,6 +995,7 @@ CanvasRails::Application.routes.draw do
       # we keep it around for backward compatibility though
       get 'courses/:course_id/search_users', action: :users
       get 'courses/:course_id/users/:id', action: :user, as: 'course_user'
+      get 'courses/:course_id/users/:user_id/progress', action: :user_progress
       get 'courses/:course_id/content_share_users', action: :content_share_users, as: 'course_content_share_users'
       get 'courses/:course_id/activity_stream', action: :activity_stream, as: 'course_activity_stream'
       get 'courses/:course_id/activity_stream/summary', action: :activity_stream_summary, as: 'course_activity_stream_summary'
@@ -1391,6 +1392,7 @@ CanvasRails::Application.routes.draw do
 
       get 'users/:id', action: :api_show
       put 'users/:id', action: :update
+      delete 'users/:id', action: :destroy, as: 'destroy_user'
       post 'users/:user_id/files', action: :create_file
 
       get  'users/:user_id/files', controller: :files, action: :api_index, as: 'user_files'
@@ -1554,9 +1556,11 @@ CanvasRails::Application.routes.draw do
       get 'users/:user_id/communication_channels', action: :index, as: 'communication_channels'
       post 'users/:user_id/communication_channels', action: :create
       post 'users/:user_id/communication_channels/:id', action: :reset_bounce_count, as: 'reset_bounce_count'
-      get 'accounts/:account_id/bounced_communication_channels.csv', action: :bouncing_channel_report
+      get 'accounts/:account_id/bounced_communication_channels.csv', action: :bouncing_channel_report, defaults: { format: :csv }
+      get 'accounts/:account_id/bounced_communication_channels', action: :bouncing_channel_report
       post 'accounts/:account_id/bounced_communication_channels/reset', action: :bulk_reset_bounce_counts
-      get 'accounts/:account_id/unconfirmed_communication_channels.csv', action: :unconfirmed_channel_report
+      get 'accounts/:account_id/unconfirmed_communication_channels.csv', action: :unconfirmed_channel_report, defaults: { format: :csv }
+      get 'accounts/:account_id/unconfirmed_communication_channels', action: :unconfirmed_channel_report
       post 'accounts/:account_id/unconfirmed_communication_channels/confirm', action: :bulk_confirm
       delete 'users/self/communication_channels/push', action: :delete_push_token
       delete 'users/:user_id/communication_channels/:id', action: :destroy
@@ -2035,6 +2039,7 @@ CanvasRails::Application.routes.draw do
         put "#{prefix}/flags/:feature", action: :update
         delete "#{prefix}/flags/:feature", action: :delete
       end
+      get "features/environment", action: :environment
     end
 
     scope(controller: :conferences) do
@@ -2296,6 +2301,10 @@ CanvasRails::Application.routes.draw do
 
     scope(controller: :history) do
       get 'users/:user_id/history', action: 'index', as: :user_history
+    end
+
+    scope(controller: :gradebooks) do
+      put "courses/:course_id/update_final_grade_overrides", action: "update_final_grade_overrides"
     end
   end
 

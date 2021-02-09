@@ -165,7 +165,11 @@ module InstFS
       data = {}
       data[file_name] = file_object
 
-      response = CanvasHttp.post(url, form_data: data, multipart: true, streaming: true)
+      begin
+        response = CanvasHttp.post(url, form_data: data, multipart: true, streaming: true)
+      rescue Net::ReadTimeout, CanvasHttp::CircuitBreakerError
+        raise InstFS::ServiceError, "unable to communicate with instfs"
+      end
       if response.class == Net::HTTPCreated
         json_response = JSON.parse(response.body)
         return json_response["instfs_uuid"] if json_response.key?("instfs_uuid")
@@ -357,7 +361,6 @@ module InstFS
       whole, remainder = number.divmod(step)
       whole * step
     end
-
     # If we just say every token was created at Time.now, since that token
     # is included in the url, every time we make a url it will be a new url and no browser
     # will never be able to get it from their cache. Which means, for example: every time you
@@ -398,8 +401,11 @@ module InstFS
         iat: iat,
         user_id: options[:user]&.global_id&.to_s,
         resource: resource,
+        jti: SecureRandom.uuid,
         host: options[:oauth_host]
       }
+      original_url = parse_original_url(options[:original_url])
+      claims[:original_url] = original_url if original_url.present?
       if options[:acting_as] && options[:acting_as] != options[:user]
         claims[:acting_as_user_id] = options[:acting_as].global_id.to_s
       end
@@ -476,8 +482,26 @@ module InstFS
       }, expires_in)
     end
 
+    def parse_original_url(url)
+      if url
+        uri = Addressable::URI.parse(url)
+        query = (uri.query_values || {}).with_indifferent_access
+        # We only want to redirect once, if the redirect param is present then we already redirected.
+        # In which case we don't send the original_url param again
+        if !Canvas::Plugin.value_to_boolean(query[:redirect])
+          query[:redirect] = true
+          query[:no_cache] = true
+          uri.query_values = query
+          return uri.to_s
+        else
+          return nil
+        end
+      end
+    end
+
     def amend_claims_for_access_token(claims, access_token, root_account)
       return unless access_token
+
       if whitelisted_access_token?(access_token)
         # temporary workaround for legacy API consumers
         claims[:legacy_api_developer_key_id] = access_token.global_developer_key_id.to_s
@@ -501,8 +525,16 @@ module InstFS
   end
 
   class DirectUploadError < StandardError; end
-  class ServiceError < DirectUploadError; end
-  class BadRequestError < DirectUploadError; end
+  class ServiceError < DirectUploadError
+    def response_status
+      502
+    end
+  end
+  class BadRequestError < DirectUploadError
+    def response_status
+      400
+    end
+  end
   class ExportReferenceError < StandardError; end
   class DuplicationError < StandardError; end
   class DeletionError < StandardError; end

@@ -29,12 +29,12 @@ describe Course do
 
   describe 'relationships' do
     it { is_expected.to have_one(:late_policy).dependent(:destroy).inverse_of(:course) }
+    it { is_expected.to have_one(:default_post_policy).inverse_of(:course) }
 
     it { is_expected.to have_many(:post_policies).dependent(:destroy).inverse_of(:course) }
-    it { is_expected.to have_one(:default_post_policy).inverse_of(:course) }
     it { is_expected.to have_many(:assignment_post_policies).inverse_of(:course) }
-
     it { is_expected.to have_many(:feature_flags) }
+    it { is_expected.to have_many(:lti_resource_links).class_name('Lti::ResourceLink') }
   end
 
   describe 'lti2 proxies' do
@@ -168,7 +168,6 @@ describe Course do
     end
   end
 
-
   describe '#moderators' do
     before(:once) do
       @course = Course.create!
@@ -264,54 +263,40 @@ describe Course do
   end
 
   describe "#hide_sections_on_course_users_page?" do
-    context "FF is On" do
-      before :once do
-        course_with_student
-        @course.root_account.enable_feature!(:hide_course_sections_from_students)
+    before :once do
+      course_with_student
+    end
+
+    context "Setting is set to On" do
+      before :each do
+        @course.update!(:hide_sections_on_course_users_page => true)
       end
 
-      context "Setting is set to On" do
-        before :each do
-          @course.update!(:hide_sections_on_course_users_page => true)
-        end
-
-        it "returns true when there is more than one section" do
-          @course.course_sections.create!
-          expect(@course.sections_hidden_on_roster_page?(current_user: @user)).to be true
-        end
-
-        it "returns false when there is only one section" do
-          expect(@course.sections_hidden_on_roster_page?(current_user: @user)).to be false
-        end
-
-        it "returns false when the user has at least one non-student enrollment" do
-          teacher = User.create!
-          @course.enroll_teacher(teacher, enrollment_state: :active)
-          @course.enroll_student(teacher, enrollment_state: :active)
-          expect(@course.sections_hidden_on_roster_page?(current_user: teacher)).to be false
-        end
-
-        it "returns false when the user has no enrollments (like an admin)" do
-          admin = account_admin_user
-          expect(@course.sections_hidden_on_roster_page?(current_user: admin)).to be false
-        end
+      it "returns true when there is more than one section" do
+        @course.course_sections.create!
+        expect(@course.sections_hidden_on_roster_page?(current_user: @user)).to be true
       end
 
-      context "Setting is set to Off" do
-        before :each do
-          @course.update!(:hide_sections_on_course_users_page => false)
-        end
+      it "returns false when there is only one section" do
+        expect(@course.sections_hidden_on_roster_page?(current_user: @user)).to be false
+      end
 
-        it "returns false" do
-          expect(@course.sections_hidden_on_roster_page?(current_user: @user)).to be false
-        end
+      it "returns false when the user has at least one non-student enrollment" do
+        teacher = User.create!
+        @course.enroll_teacher(teacher, enrollment_state: :active)
+        @course.enroll_student(teacher, enrollment_state: :active)
+        expect(@course.sections_hidden_on_roster_page?(current_user: teacher)).to be false
+      end
+
+      it "returns false when the user has no enrollments (like an admin)" do
+        admin = account_admin_user
+        expect(@course.sections_hidden_on_roster_page?(current_user: admin)).to be false
       end
     end
 
-    context "FF is off" do
-      before :once do
-        course_with_student
-        @course.root_account.disable_feature!(:hide_course_sections_from_students)
+    context "Setting is set to Off" do
+      before :each do
+        @course.update!(:hide_sections_on_course_users_page => false)
       end
 
       it "returns false" do
@@ -4577,6 +4562,11 @@ describe Course, "section_visibility" do
       @admin = account_admin_user
       visible_enrollments = @course.apply_enrollment_visibility(@course.student_enrollments, @admin)
       expect(visible_enrollments.map(&:user)).to be_include(@course.student_view_student)
+    end
+
+    it "is safely empty for a nil user" do
+      visible_enrollments = @course.apply_enrollment_visibility(@course.student_enrollments, nil)
+      expect(visible_enrollments.count).to eq(0)
     end
 
     it "should return student view students to account admins who are also observers for some reason" do

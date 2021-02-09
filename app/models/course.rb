@@ -128,6 +128,7 @@ class Course < ActiveRecord::Base
   has_many :current_users, -> { distinct }, through: :current_enrollments, source: :user
   has_many :all_current_users, -> { distinct }, through: :all_current_enrollments, source: :user
   has_many :active_users, -> { distinct }, through: :participating_enrollments, source: :user
+  has_many :user_past_lti_ids, as: :context, inverse_of: :context
   has_many :group_categories, -> {where(deleted_at: nil) }, as: :context, inverse_of: :context
   has_many :all_group_categories, :class_name => 'GroupCategory', :as => :context, :inverse_of => :context
   has_many :groups, :as => :context, :inverse_of => :context
@@ -167,7 +168,7 @@ class Course < ActiveRecord::Base
   has_many :grading_standards, -> { where("workflow_state<>'deleted'") }, as: :context, inverse_of: :context
   has_many :web_conferences, -> { order('created_at DESC') }, as: :context, inverse_of: :context, dependent: :destroy
   has_many :collaborations, -> { order(Arel.sql("collaborations.title, collaborations.created_at")) }, as: :context, inverse_of: :context, dependent: :destroy
-  has_many :context_modules, -> { order(:position) }, as: :context, inverse_of: :context, dependent: :destroy
+  has_many :context_modules, -> { order(:position, :id) }, as: :context, inverse_of: :context, dependent: :destroy
   has_many :context_module_progressions, through: :context_modules
   has_many :active_context_modules, -> { where(workflow_state: 'active') }, as: :context, inverse_of: :context, class_name: 'ContextModule'
   has_many :context_module_tags, -> { order(:position).where(tag_type: 'context_module') }, class_name: 'ContentTag', as: :context, inverse_of: :context, dependent: :destroy
@@ -207,17 +208,22 @@ class Course < ActiveRecord::Base
 
   has_one :course_score_statistic, dependent: :destroy
   has_many :auditor_course_records,
-    class_name: "Auditors::ActiveRecord::CourseRecord",
-    dependent: :destroy,
-    inverse_of: :course
+           class_name: 'Auditors::ActiveRecord::CourseRecord',
+           dependent: :destroy,
+           inverse_of: :course
   has_many :auditor_grade_change_records,
-    as: :context,
-    inverse_of: :course,
-    class_name: "Auditors::ActiveRecord::GradeChangeRecord",
-    dependent: :destroy
+           as: :context,
+           inverse_of: :course,
+           class_name: 'Auditors::ActiveRecord::GradeChangeRecord',
+           dependent: :destroy
+  has_many :lti_resource_links,
+           as: :context,
+           inverse_of: :context,
+           class_name: 'Lti::ResourceLink',
+           dependent: :destroy
 
   has_many :conditional_release_rules, inverse_of: :course, class_name: "ConditionalRelease::Rule", dependent: :destroy
-  has_one :outcome_proficiency, as: :context, inverse_of: :context, dependent: :destroy
+  has_one :outcome_proficiency, -> { preload(:outcome_proficiency_ratings) }, as: :context, inverse_of: :context, dependent: :destroy
   has_one :outcome_calculation_method, as: :context, inverse_of: :context, dependent: :destroy
 
   prepend Profile::Association
@@ -2433,7 +2439,8 @@ class Course < ActiveRecord::Base
       :allow_student_discussion_topics, :allow_student_discussion_editing, :lock_all_announcements,
       :organize_epub_by_content_type, :show_announcements_on_home_page,
       :home_page_announcement_limit, :enable_offline_web_export, :usage_rights_required,
-      :restrict_student_future_view, :restrict_student_past_view, :restrict_enrollments_to_course_dates
+      :restrict_student_future_view, :restrict_student_past_view, :restrict_enrollments_to_course_dates,
+      :homeroom_course
     ]
   end
 
@@ -2565,7 +2572,7 @@ class Course < ActiveRecord::Base
                   visibilities.map{|s| s[:course_section_id]}, false)
     when :restricted
       user_ids = visibilities.map { |s| s[:associated_user_id] }.compact
-      scope.where(enrollments: { user_id: user_ids + [user.id] })
+      scope.where(enrollments: { user_id: (user_ids + [user&.id]).compact })
     else
       scope.none
     end
@@ -2933,11 +2940,16 @@ class Course < ActiveRecord::Base
 
         delete_unless.call([TAB_GRADES], :read_grades, :view_all_grades, :manage_grades)
         delete_unless.call([TAB_PEOPLE], :read_roster, :manage_students, :manage_admin_users)
-        delete_unless.call([TAB_FILES], :read, :manage_files)
         delete_unless.call([TAB_DISCUSSIONS], :read_forum, :post_to_forum, :create_forum, :moderate_forum)
         delete_unless.call([TAB_SETTINGS], :read_as_admin)
         delete_unless.call([TAB_ANNOUNCEMENTS], :read_announcements)
         delete_unless.call([TAB_RUBRICS], :read_rubrics, :manage_rubrics)
+
+        if self.root_account.feature_enabled?(:granular_permissions_course_files)
+          delete_unless.call([TAB_FILES], :read, *RoleOverride::GRANULAR_FILE_PERMISSIONS)
+        else
+          delete_unless.call([TAB_FILES], :read, :manage_files)
+        end
 
         # remove outcomes tab for logged-out users or non-students
         outcome_tab = tabs.detect { |t| t[:id] == TAB_OUTCOMES }
@@ -2953,6 +2965,11 @@ class Course < ActiveRecord::Base
           TAB_FILES => [:manage_files],
           TAB_DISCUSSIONS => [:moderate_forum]
         }
+
+        if self.root_account.feature_enabled?(:granular_permissions_course_files)
+          additional_checks[TAB_FILES] = RoleOverride::GRANULAR_FILE_PERMISSIONS
+        end
+
         tabs.reject! do |t|
           # tab shouldn't be shown to non-admins
           (t[:hidden] || t[:hidden_unused]) &&
@@ -3078,6 +3095,8 @@ class Course < ActiveRecord::Base
   add_setting :syllabus_updated_at
 
   add_setting :usage_rights_required, :boolean => true, :default => false, :inherited => true
+
+  add_setting :homeroom_course, :boolean => true, :default => false
 
   def user_can_manage_own_discussion_posts?(user)
     return true if allow_student_discussion_editing?
@@ -3584,14 +3603,10 @@ class Course < ActiveRecord::Base
   end
 
   def sections_hidden_on_roster_page?(current_user:)
-    if root_account.feature_enabled?('hide_course_sections_from_students')
-      course_sections.active.many? &&
-          hide_sections_on_course_users_page? &&
-          !current_user.enrollments.active.where(course: self).empty? &&
-          current_user.enrollments.active.where(course: self).all?(&:student?)
-    else
-      false
-    end
+    course_sections.active.many? &&
+      hide_sections_on_course_users_page? &&
+      !current_user.enrollments.active.where(course: self).empty? &&
+      current_user.enrollments.active.where(course: self).all?(&:student?)
   end
 
   def resolved_outcome_proficiency

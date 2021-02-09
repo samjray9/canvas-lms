@@ -311,12 +311,14 @@ class UsersController < ApplicationController
 
         flash[:notice] = t('google_drive_added', "Google Drive account successfully added!")
         return redirect_to(json['return_to_url'])
+      rescue Signet::AuthorizationError => e
+        Canvas::Errors.capture_exception(:oauth, e, :info)
+        flash[:error] = t('google_drive_authorization_failure', "Google Drive failed authorization for current user!")
       rescue Google::APIClient::ClientError => e
-        Canvas::Errors.capture_exception(:oauth, e)
-
+        Canvas::Errors.capture_exception(:oauth, e, :warn)
         flash[:error] = e.to_s
       end
-      return redirect_to(user_profile_url(@current_user))
+      return redirect_to (@current_user ? user_profile_url(@current_user) : root_url)
     end
 
     if !oauth_request || (request.host_with_port == oauth_request.original_host_with_port && oauth_request.user != @current_user)
@@ -472,6 +474,7 @@ class UsersController < ApplicationController
     clear_crumbs
 
     @show_footer = true
+    @k5_mode = @context.account.feature_enabled?(:canvas_for_elementary)
 
     if request.path =~ %r{\A/dashboard\z}
       return redirect_to(dashboard_url, :status => :moved_permanently)
@@ -480,6 +483,7 @@ class UsersController < ApplicationController
 
     js_env({
       :DASHBOARD_SIDEBAR_URL => dashboard_sidebar_url,
+      :K5_MODE => @k5_mode,
       :PREFERENCES => {
         :dashboard_view => @current_user.dashboard_view(@domain_root_account),
         :hide_dashcard_color_overlays => @current_user.preferences[:hide_dashcard_color_overlays],
@@ -487,8 +491,7 @@ class UsersController < ApplicationController
       },
       :STUDENT_PLANNER_ENABLED => planner_enabled?,
       :STUDENT_PLANNER_COURSES => planner_enabled? && map_courses_for_menu(@current_user.courses_with_primary_enrollment),
-      :STUDENT_PLANNER_GROUPS => planner_enabled? && map_groups_for_planner(@current_user.current_groups),
-      :PAST_ANNOUNCEMENTS_ENABLED => @domain_root_account.feature_enabled?('past_announcements')
+      :STUDENT_PLANNER_GROUPS => planner_enabled? && map_groups_for_planner(@current_user.current_groups)
     })
 
     @announcements = AccountNotification.for_user_and_account(@current_user, @domain_root_account)
@@ -498,8 +501,14 @@ class UsersController < ApplicationController
       content_for_head helpers.auto_discovery_link_tag(:atom, feeds_user_format_path(@current_user.feed_code, :atom), {:title => t('user_atom_feed', "User Atom Feed (All Courses)")})
     end
 
-    css_bundle :dashboard
-    js_bundle :dashboard
+    if @k5_mode
+      css_bundle :k5_dashboard
+      css_bundle :dashboard_card
+      js_bundle :k5_dashboard
+    else
+      css_bundle :dashboard
+      js_bundle :dashboard
+    end
     add_body_class "dashboard-is-planner" if show_planner?
   end
 
@@ -574,7 +583,7 @@ class UsersController < ApplicationController
     if CANVAS_RAILS5_2
       render :formats => 'html', :layout => false
     else
-      render format: 'html', layout: false
+      render formats: :html, layout: false
     end
   end
 
@@ -2522,6 +2531,14 @@ class UsersController < ApplicationController
     end
   end
 
+  def destroy
+    user = api_find(User, params[:id])
+    if user && authorized_action(@domain_root_account, @current_user, :manage_site_settings)
+      user.destroy
+      render json: { status: "ok" }
+    end
+  end
+
   protected
 
   def teacher_activity_report(teacher, course, student_enrollments)
@@ -2811,7 +2828,7 @@ class UsersController < ApplicationController
     @invalid_observee_creds = nil
     @invalid_observee_code = nil
     if @user.initial_enrollment_type == 'observer'
-      @pairing_code = find_observer_pairing_code(params[:pairing_code][:code])
+      @pairing_code = find_observer_pairing_code(params[:pairing_code]&.[](:code))
       if !@pairing_code.nil?
         @observee = @pairing_code.user
         # If the user is using a valid pairing code, we don't need recaptcha

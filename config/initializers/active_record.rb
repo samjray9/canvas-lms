@@ -650,10 +650,8 @@ class ActiveRecord::Base
       GuardRail.activate(:primary) do
         if Rails.env.test? ? self.in_transaction_in_test? : connection.open_transactions > 0
           raise "don't run current_xlog_location in a transaction"
-        elsif connection.send(:postgresql_version) >= 100000
-          connection.select_value("SELECT pg_current_wal_lsn()")
         else
-          connection.select_value("SELECT pg_current_xlog_location()")
+          connection.current_wal_lsn
         end
       end
     end
@@ -1070,13 +1068,13 @@ ActiveRecord::Relation.class_eval do
   end
 
   def update_all_locked_in_order(updates)
-    locked_scope = lock(:no_key_update).order(:id)
+    locked_scope = lock(:no_key_update).order(primary_key.to_sym)
     if Setting.get("update_all_locked_in_order_subquery", "true") == "true"
-      unscoped.where(id: locked_scope).update_all(updates)
+      unscoped.where(primary_key => locked_scope).update_all(updates)
     else
       transaction do
-        ids = locked_scope.pluck(:id)
-        unscoped.where(id: ids).update_all(updates) unless ids.empty?
+        ids = locked_scope.pluck(primary_key)
+        unscoped.where(primary_key => ids).update_all(updates) unless ids.empty?
       end
     end
   end
@@ -1496,15 +1494,28 @@ ActiveRecord::ConnectionAdapters::SchemaStatements.class_eval do
     end
   end
 
-  def foreign_key_for(from_table, options_or_to_table = {})
-    return unless supports_foreign_keys?
-    fks = foreign_keys(from_table).select { |fk| fk.defined_for? options_or_to_table }
-    # prefer a FK on a column named after the table
-    unless options_or_to_table.is_a?(Hash)
-      column = foreign_key_column_for(options_or_to_table) if options_or_to_table
-      return fks.find { |fk| fk.column == column} || fks.first
+  if CANVAS_RAILS5_2
+    def foreign_key_for(from_table, options_or_to_table = {})
+      return unless supports_foreign_keys?
+      fks = foreign_keys(from_table).select { |fk| fk.defined_for? options_or_to_table }
+      # prefer a FK on a column named after the table
+      unless options_or_to_table.is_a?(Hash)
+        column = foreign_key_column_for(options_or_to_table) if options_or_to_table
+        return fks.find { |fk| fk.column == column} || fks.first
+      end
+      fks.first
     end
-    fks.first
+  else
+    def foreign_key_for(from_table, **options)
+      return unless supports_foreign_keys?
+      fks = foreign_keys(from_table).select { |fk| fk.defined_for?(options) }
+      # prefer a FK on a column named after the table
+      if options[:to_table]
+        column = foreign_key_column_for(options[:to_table])
+        return fks.find { |fk| fk.column == column } || fks.first
+      end
+      fks.first
+    end
   end
 
   def remove_foreign_key(from_table, *args)
@@ -1791,3 +1802,65 @@ module PreserveShardAfterTransaction
   end
 end
 ActiveRecord::ConnectionAdapters::Transaction.prepend(PreserveShardAfterTransaction)
+
+module ConnectionWithMaxRuntime
+  def initialize(*)
+    super
+    @created_at = Concurrent.monotonic_time
+  end
+
+  def runtime
+    Concurrent.monotonic_time - @created_at
+  end
+end
+ActiveRecord::ConnectionAdapters::AbstractAdapter.prepend(ConnectionWithMaxRuntime)
+
+module MaxRuntimeConnectionPool
+  def max_runtime
+    # TODO: Rails 6.1 uses a PoolConfig object instead
+    @spec.config[:max_runtime]
+  end
+
+  def acquire_connection(*)
+    loop do
+      conn = super
+      return conn unless max_runtime && conn.runtime >= max_runtime
+
+      @connections.delete(conn)
+      conn.disconnect!
+    end
+  end
+
+  def checkin(conn)
+    return super unless max_runtime && conn.runtime >= max_runtime
+
+    conn.lock.synchronize do
+      synchronize do
+        remove_connection_from_thread_cache conn
+
+        @connections.delete(conn)
+        conn.disconnect!
+      end
+    end
+  end
+
+  def flush(*)
+    super
+    return unless max_runtime
+
+    old_connections = synchronize do
+      # TODO: Rails 6.1 adds a `discarded?` method instead of checking this directly
+      return unless @connections
+      @connections.select do |conn|
+        !conn.in_use? && conn.runtime >= max_runtime
+      end.each do |conn|
+        conn.lease
+        @available.delete conn
+        @connections.delete conn
+      end
+    end
+
+    old_connections.each(&:disconnect!)
+  end
+end
+ActiveRecord::ConnectionAdapters::ConnectionPool.prepend(MaxRuntimeConnectionPool)

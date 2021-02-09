@@ -1539,6 +1539,22 @@ describe GradebooksController do
             end
           end
         end
+
+        describe 'inactive_concluded_lmgb_filters' do
+          it 'is false if the feature flag is off' do
+            @course.root_account.disable_feature! :inactive_concluded_lmgb_filters
+            get :show, params: {course_id: @course.id}
+            gradebook_env = assigns[:js_env][:GRADEBOOK_OPTIONS]
+            expect(gradebook_env[:inactive_concluded_lmgb_filters]).to be_falsey
+          end
+
+          it 'is true if the feature flag is on' do
+            @course.root_account.enable_feature! :inactive_concluded_lmgb_filters
+            get :show, params: {course_id: @course.id}
+            gradebook_env = assigns[:js_env][:GRADEBOOK_OPTIONS]
+            expect(gradebook_env[:inactive_concluded_lmgb_filters]).to be_truthy
+          end
+        end
       end
     end
   end
@@ -2900,6 +2916,103 @@ describe GradebooksController do
         get "grading_rubrics", params: {course_id: @course}
 
         expect(response).to redirect_to(login_url)
+      end
+    end
+  end
+
+  describe "PUT 'update_final_grade_overrides'" do
+    let(:override_score_updates) do
+      [
+        {student_id: @student.id, override_score: 10.0}
+      ]
+    end
+
+    let(:update_params) { {course_id: @course.id, override_scores: override_score_updates} }
+
+    before(:each) do
+      user_session(@teacher)
+
+      Account.site_admin.enable_feature!(:import_override_scores_in_gradebook)
+      @course.enable_feature!(:final_grades_override)
+      @course.allow_final_grade_override = true
+      @course.save!
+    end
+
+    it "returns unauthorized when there is no current user" do
+      remove_user_session
+      put :update_final_grade_overrides, params: update_params, format: :json
+      assert_unauthorized
+    end
+
+    it "returns unauthorized when the user is not authorized to manage grades" do
+      user_session(@student)
+      put :update_final_grade_overrides, params: update_params, format: :json
+      assert_unauthorized
+    end
+
+    it "returns unauthorized when the course does not allow final grade override" do
+      @course.allow_final_grade_override = false
+      @course.save!
+
+      put :update_final_grade_overrides, params: update_params, format: :json
+      assert_unauthorized
+    end
+
+    it "returns unauthorized when the importing override scores is not enabled" do
+      Account.site_admin.disable_feature!(:import_override_scores_in_gradebook)
+      put :update_final_grade_overrides, params: update_params, format: :json
+      assert_unauthorized
+    end
+
+    it "grants authorization to teachers in active courses" do
+      put :update_final_grade_overrides, params: update_params, format: :json
+      expect(response).to be_ok
+    end
+
+    it "returns unauthorized when the course is concluded" do
+      @course.complete!
+      put :update_final_grade_overrides, params: update_params, format: :json
+      assert_unauthorized
+    end
+
+    it "returns an error when the override_scores param is not supplied" do
+      put :update_final_grade_overrides, params: update_params.slice(:course_id), format: :json
+      assert_status(400)
+    end
+
+    describe "grading periods" do
+      let(:group_helper)  { Factories::GradingPeriodGroupHelper.new }
+      let(:period_helper) { Factories::GradingPeriodHelper.new }
+
+      it "accepts grading periods that are used by the course" do
+        grading_period = period_helper.create_with_group_for_account(@course.account)
+        @course.enrollment_term.update!(grading_period_group: grading_period.grading_period_group)
+
+        put :update_final_grade_overrides, params: update_params.merge({grading_period_id: grading_period.id})
+        expect(response).to be_ok
+      end
+
+      it "returns a 400 for grading periods that are not used by the course" do
+        other_period = period_helper.create_with_group_for_account(@course.account)
+
+        put :update_final_grade_overrides, params: update_params.merge({grading_period_id: other_period.id})
+
+        aggregate_failures do
+          assert_status(400)
+          expect(json_parse["error"]).to eq "invalid_grading_period"
+        end
+      end
+    end
+
+    it "returns a progress object" do
+      put :update_final_grade_overrides, params: update_params, format: :json
+
+      returned_id = json_parse["id"]
+      progress = Progress.find(returned_id)
+
+      aggregate_failures do
+        expect(progress).not_to be nil
+        expect(progress.tag).to eq "override_grade_update"
       end
     end
   end

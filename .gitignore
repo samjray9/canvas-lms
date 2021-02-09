@@ -37,6 +37,7 @@ npm-debug.log
 /public/dist/
 /public/doc/api/
 /public/javascripts/translations/
+/storybook-static/
 /tmp/*
 !/tmp/.keep
 /vendor/bundle
@@ -50,9 +51,6 @@ yarn-error.log
 /public/plugins/
 /spec/coffeescripts/plugins/
 /spec/plugins/
-
-# generated client app stuff
-/public/javascripts/client_apps/
 
 # canvas-gems
 /gems/*/coverage

@@ -52,6 +52,12 @@ export default class TrayController {
     this._editor = editor
     this.$img = editor.selection.getNode()
     this._shouldOpen = true
+
+    if (bridge.focusedEditor) {
+      // Dismiss any content trays that may already be open
+      bridge.hideTrays()
+    }
+
     this._renderTray()
   }
 
@@ -71,7 +77,7 @@ export default class TrayController {
         role: imageOptions.isDecorativeImage ? 'presentation' : null,
         width: imageOptions.appliedWidth,
         height: imageOptions.appliedHeight,
-        'data-is-decorative': null // replaced by role=presentation
+        'data-decorative': imageOptions.isDecorativeImage ? true : null // should be replaced by role=presentation once a11y-checker supports it
       })
 
       // tell tinymce so the context toolbar resets

@@ -231,6 +231,23 @@ describe UsersController do
       expect(session[:oauth_gdrive_access_token]).to be_nil
       expect(session[:oauth_gdrive_refresh_token]).to be_nil
     end
+
+    it "handles auth failure gracefully" do
+      authorization_mock = double('authorization')
+      allow(authorization_mock).to receive_messages(:code= => nil)
+      allow(authorization_mock).to receive(:fetch_access_token!) do
+        raise Signet::AuthorizationError, "{\"error\": \"invalid_grant\", \"error_description\": \"Bad Request\"}"
+      end
+      drive_mock = Google::APIClient::API.new('mock', {})
+      allow(drive_mock).to receive(:about).and_return(double(get: nil))
+      client_mock = double("client")
+      allow(client_mock).to receive(:authorization).and_return(authorization_mock)
+      allow(GoogleDrive::Client).to receive(:create).and_return(client_mock)
+      state = Canvas::Security.create_jwt({'return_to_url' => 'http://localhost.com/return', 'nonce' => 'abc123'})
+      get :oauth_success, params: {state: state, service: "google_drive", code: "some_code"}
+      expect(response).to be_redirect
+      expect(flash[:error]).to eq "Google Drive failed authorization for current user!"
+    end
   end
 
   context "manageable_courses" do
@@ -409,6 +426,11 @@ describe UsersController do
           oe = new_user.observer_enrollments.first
           expect(oe.course).to eq @course
           expect(oe.associated_user).to eq @user
+        end
+
+        it "should not 500 when paring code is not in request" do
+          post 'create', params: { pseudonym: { unique_id: 'jane@example.com' }, user: { name: 'Jane Observer', terms_of_use: '1', initial_enrollment_type: 'observer' } }, format: 'json'
+          assert_status(400)
         end
 
         it "should allow observers to self register with a pairing code" do
@@ -765,6 +787,19 @@ describe UsersController do
           expect(p).to be_active
           expect(p.sis_user_id).to eq 'testsisid'
           expect(p.integration_id).to eq 'abc'
+          expect(p.user).to be_pre_registered
+        end
+
+        it "should reassign null values when passing empty strings for pseudonym[integration_id]" do
+          post 'create', params: {account_id: account.id,
+                                  pseudonym: { unique_id: 'jacob', sis_user_id: 'testsisid', integration_id: '', path: '' },
+                                  user: { name: 'Jacob Fugal' }}, format: 'json'
+          expect(response).to be_successful
+          p = Pseudonym.where(unique_id: 'jacob').first
+          expect(p.account_id).to eq account.id
+          expect(p).to be_active
+          expect(p.sis_user_id).to eq 'testsisid'
+          expect(p.integration_id).to be_nil
           expect(p.user).to be_pre_registered
         end
 
@@ -2384,6 +2419,55 @@ describe UsersController do
           expect(course_data.detect{|h| h[:id] == @course1.id}[:shortName]).to eq "worst class"
         end
       end
+    end
+
+    context "with canvas for elementary feature flag" do
+      before(:once) do
+        @account = Account.default
+      end
+
+      context "disabled" do
+        it "sets ENV.K5_MODE to false" do
+          course_with_student_logged_in(active_all: true)
+          @current_user = @user
+          get 'user_dashboard'
+          expect(assigns[:js_env][:K5_MODE]).to be_falsy
+        end
+
+        it "only returns classic dashboard bundles" do
+          course_with_student_logged_in(active_all: true)
+          @current_user = @user
+          get 'user_dashboard'
+          expect(assigns[:js_bundles].flatten).to include :dashboard
+          expect(assigns[:js_bundles].flatten).not_to include :k5_dashboard
+          expect(assigns[:css_bundles].flatten).to include :dashboard
+          expect(assigns[:css_bundles].flatten).not_to include :k5_dashboard
+        end
+      end
+
+      context "enabled" do
+        before(:once) do
+          @account.enable_feature!(:canvas_for_elementary)
+        end
+
+        it "sets ENV.K5_MODE to true when canvas_for_elementary flag is enabled" do
+          course_with_student_logged_in(active_all: true)
+          @current_user = @user
+          get 'user_dashboard'
+          expect(assigns[:js_env][:K5_MODE]).to be_truthy
+        end
+
+        it "returns K-5 dashboard bundles" do
+          course_with_student_logged_in(active_all: true)
+          @current_user = @user
+          get 'user_dashboard'
+          expect(assigns[:js_bundles].flatten).to include :k5_dashboard
+          expect(assigns[:js_bundles].flatten).not_to include :dashboard
+          expect(assigns[:css_bundles].flatten).to include :k5_dashboard
+          expect(assigns[:css_bundles].flatten).not_to include :dashboard
+        end
+      end
+
     end
   end
 

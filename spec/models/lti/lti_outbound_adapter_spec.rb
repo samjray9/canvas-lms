@@ -216,6 +216,15 @@ describe Lti::LtiOutboundAdapter do
       adapter.generate_post_payload
     end
 
+    it "errors if the url is ridiculous" do
+      tool_launch = double('tool launch')
+      expect(tool_launch).to receive_messages(generate: {})
+      allow(tool_launch).to receive_messages(url: "wat;no-way")
+      allow(LtiOutbound::ToolLaunch).to receive(:new).and_return(tool_launch)
+      adapter.prepare_tool_launch(return_url, variable_expander)
+      expect{ adapter.generate_post_payload }.to raise_error(::Lti::Errors::InvalidLaunchUrlError)
+    end
+
     it "does not copy query params to the post body if oauth_compliant tool setting is enabled" do
       allow(account).to receive(:all_account_users_for).with(user).and_return([])
       tool.settings = {oauth_compliant: true}
@@ -361,6 +370,7 @@ describe Lti::LtiOutboundAdapter do
           url: tool.url
         )
       )
+      allow_any_instance_of(Account).to receive(:feature_enabled?).and_call_original
     end
 
     it 'builds the expected encrypted JWT with the correct course data' do

@@ -17,11 +17,6 @@
  */
 
 import $ from 'jquery'
-// this copy of lodash is already in the webpack chunk
-// (something to do with backbone compatability)
-// if I simply import {debounce} from 'lodash', then there are 2 copies
-// and the chunk exceeds our size limit.
-import {debounce} from './vendor/lodash.underscore'
 
 // configure MathJax to use 'color' extension fo LaTeX coding
 const localConfig = {
@@ -45,6 +40,9 @@ const localConfig = {
 
 const mathml = {
   loadMathJax(configFile = 'TeX-MML-AM_HTMLorMML', cb = null) {
+    if (this.preventMathJax()) {
+      return
+    }
     if (!this.isMathJaxLoaded()) {
       const locale = ENV.LOCALE || 'en'
       // signal local config to mathjax as it loads
@@ -73,13 +71,28 @@ const mathml = {
                 .querySelectorAll('.math_equation_latex')
                 .forEach(m => m.classList.add('fade-in-equation'))
             })
+          } else {
+            // though isMathInElement ignores <math> w/in .hidden-readable elements,
+            // MathJax does not and will process it anyway. This is a problem when
+            // you open the equation editor while editing a quiz and it adds to the DOM
+            // elements that will get saved with the quiz.
+            // There's a feature request against MathJax (https://github.com/mathjax/MathJax/issues/505)
+            // to add an ignoreClass config prop to the mml2jax processor, but it's not available.
+            // Since we want to ignore <math> in .hidden-readable spans, let's remove the MathJunk™
+            // right after MathJax adds it.
+            window.MathJax.Hub.Register.MessageHook('End Math', function(message) {
+              $(message[1])
+                .find('.hidden-readable [class^="MathJax"], .hidden-readable [id^="MathJax"]')
+                .remove()
+            })
           }
+
           // leaving this here so I don't have to keep looking up how to see all messages
           // window.MathJax.Hub.Startup.signal.Interest(function (message) {
-          //   console.log('>>> Startup:', message[0])
+          //   console.log('>>> MathJax startup:', message)
           // })
           // window.MathJax.Hub.signal.Interest(function(message) {
-          //   console.log('>>> ', message[0])
+          //   console.log('>>> MathJax signal', message)
           // })
           delete window.MathJaxIsLoading
         },
@@ -95,46 +108,88 @@ const mathml = {
     }
   },
 
+  preventMathJax() {
+    return /(?:rubrics|\/files)/.test(window.location.pathname)
+  },
+
   isMathOnPage() {
+    return this.isMathInElement(document.body)
+  },
+
+  isMathInElement(elem) {
     if (ENV?.FEATURES?.new_math_equation_handling) {
       // handle the change from image + hidden mathml to mathjax formatted latex
-      if (document.querySelector('.math_equation_latex')) {
+      if (elem.querySelector('.math_equation_latex,.math_equation_mml')) {
         return true
       }
 
-      if (document.querySelector('img.equation_image')) {
+      if (elem.querySelector('img.equation_image')) {
         return true
       }
 
       if (ENV.FEATURES?.inline_math_everywhere) {
         // look for latex the user may have entered w/o the equation editor by
         // looking for mathjax's opening delimiters
-        if (/(?:\$\$|\\\()/.test(document.body.textContent)) {
+        if (/(?:\$\$|\\\()/.test(elem.textContent)) {
           return true
         }
       }
     }
-    const mathElements = document.getElementsByTagName('math')
+    const mathElements = elem.getElementsByTagName('math')
     for (let i = 0; i < mathElements.length; i++) {
       const $el = $(mathElements[i])
-      if ($el.is(':visible') && $el.parent('.hidden-readable').length <= 0) {
+      if (
+        $el.is(':visible') &&
+        $el.parent('.hidden-readable').length <= 0 &&
+        $el.parent('.MJX_Assistive_MathML').length <= 0 // already mathjax'd
+      ) {
         return true
       }
     }
     return false
   },
 
+  isMathJaxIgnored(elem) {
+    if (!elem) return true
+
+    // ignore disconnected elements
+    if (!document.body.contains(elem)) return true
+
+    // elements to ignore selector
+    const ignore_list =
+      '.MJX_Assistive_MathML,#header,#mobile-header,#left-side,#quiz-elapsed-time,.ui-menu-carat'
+
+    // check if elem is in the ignore list
+    if (elem.parentElement?.querySelector(ignore_list) === elem) {
+      return true
+    }
+
+    // check if elem is a child of .mathjax_ignore
+    while (elem !== document.body) {
+      if (elem.classList.contains('mathjax_ignore')) {
+        return true
+      }
+      elem = elem.parentElement
+    }
+    return false
+  },
+
+  // legacy api
   isMathMLOnPage() {
-    return this.isMathOnPage() // just in case I missed a place it's being used
+    return this.isMathOnPage()
   },
 
   isMathJaxLoaded() {
     return !!window.MathJax?.Hub
   },
 
-  processNewMathOnPage() {
-    if (this.isMathOnPage()) {
-      this.loadMathJax(undefined)
+  processNewMathInElem(elem) {
+    if (this.isMathInElement(elem) && !this.isMathJaxIgnored(elem)) {
+      if (this.isMathJaxLoaded()) {
+        this.reloadElement(elem)
+      } else {
+        this.loadMathJax(undefined)
+      }
     }
   },
 
@@ -200,18 +255,18 @@ const mathImageHelper = {
 
   dispatchProcessNewMathOnLoad(event) {
     event.target.removeEventListener('load', this.dispatchProcessNewMathOnLoad)
-    window.dispatchEvent(new Event('process-new-math'))
+    window.dispatchEvent(
+      new CustomEvent('process-new-math', {detail: {target: event.target.parentElement}})
+    )
   }
 }
 
-// TODO: if anyone firing the event ever needs a callback,
-// push them onto an array, then pop and call in the handler
-function handleNewMath() {
-  if (ENV?.FEATURES?.new_math_equation_handling) {
-    mathml.processNewMathOnPage()
+function handleNewMath(event) {
+  if (event?.detail?.target) {
+    mathml.processNewMathInElem(event.detail.target)
   }
 }
 
-window.addEventListener('process-new-math', debounce(handleNewMath, 500))
+window.addEventListener('process-new-math', handleNewMath)
 
 export {mathml as default, mathImageHelper}

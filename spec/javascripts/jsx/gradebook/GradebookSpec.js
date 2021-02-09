@@ -367,7 +367,7 @@ test('calculates grades using properties from the gradebook', function() {
   equal(args[0], this.submissions)
   equal(args[1], gradebook.assignmentGroups)
   equal(args[2], gradebook.options.group_weighting_scheme)
-  equal(args[3], gradebook.gradingPeriodSet)
+  equal(args[4], gradebook.gradingPeriodSet)
 })
 
 test('scopes effective due dates to the user', function() {
@@ -378,7 +378,7 @@ test('scopes effective due dates to the user', function() {
     loaded: true,
     initialized: true
   })
-  const dueDates = CourseGradeCalculator.calculate.getCall(0).args[4]
+  const dueDates = CourseGradeCalculator.calculate.getCall(0).args[5]
   deepEqual(dueDates, {
     201: {
       grading_period_id: '701'
@@ -418,8 +418,8 @@ test('calculates grades without grading period data when effective due dates are
   equal(args[0], this.submissions)
   equal(args[1], gradebook.assignmentGroups)
   equal(args[2], gradebook.options.group_weighting_scheme)
-  equal(typeof args[3], 'undefined')
   equal(typeof args[4], 'undefined')
+  equal(typeof args[5], 'undefined')
 })
 
 test('stores the current grade on the student if not viewing ungraded as zero', function() {
@@ -2056,6 +2056,16 @@ QUnit.module('#listHiddenAssignments', hooks => {
       }
     }
     gradebook.gotSubmissionsChunk(submissionsChunk)
+    gradebook.setAssignmentGroups([
+      {
+        id: '1',
+        assignments: [gradedAssignment]
+      },
+      {
+        id: '2',
+        assignments: [notGradedAssignment]
+      }
+    ])
     gradebook.setAssignmentsLoaded()
     gradebook.setSubmissionsLoaded(true)
   })
@@ -2068,6 +2078,13 @@ QUnit.module('#listHiddenAssignments', hooks => {
   test('excludes "not_graded" assignments even when submission is postable', function() {
     const hiddenAssignments = gradebook.listHiddenAssignments('1101')
     notOk(hiddenAssignments.find(assignment => assignment.id === notGradedAssignment.id))
+  })
+
+  test('ignores assignments excluded by the current set of filters', function() {
+    gradebook.setFilterColumnsBySetting('assignmentGroupId', '2')
+
+    const hiddenAssignments = gradebook.listHiddenAssignments('1101')
+    notOk(hiddenAssignments.find(assignment => assignment.id === gradedAssignment.id))
   })
 })
 
@@ -4584,8 +4601,9 @@ QUnit.module('Gradebook Assignment Student Visibility', moduleHooks => {
     allStudents = [
       {
         id: '1101',
-        name: 'Adam Jones',
-        enrollments: [{type: 'StudentEnrollment', grades: {html_url: 'http://example.url/'}}]
+        name: "Adam Jone's",
+        enrollments: [{type: 'StudentEnrollment', grades: {html_url: 'http://example.url/'}}],
+        sortable_name: "Jone's, Adam"
       },
       {
         id: '1102',
@@ -4628,6 +4646,18 @@ QUnit.module('Gradebook Assignment Student Visibility', moduleHooks => {
       gradebook.gotChunkOfStudents(allStudents)
       const student = gradebook.studentsThatCanSeeAssignment('2301')['1101']
       strictEqual(student.enrollments[0].grades.html_url, 'http://example.url/')
+    })
+
+    test('does not escape the name of the student', () => {
+      gradebook.gotChunkOfStudents(allStudents)
+      const student = gradebook.studentsThatCanSeeAssignment('2301')['1101']
+      strictEqual(student.name, "Adam Jone's")
+    })
+
+    test('does not escape the sortable name of the student', () => {
+      gradebook.gotChunkOfStudents(allStudents)
+      const student = gradebook.studentsThatCanSeeAssignment('2301')['1101']
+      strictEqual(student.sortable_name, "Jone's, Adam")
     })
 
     test('returns all students when the assignment is visible to everyone', () => {
@@ -9409,6 +9439,46 @@ QUnit.module('Gradebook#gotAllAssignmentGroups', hooks => {
     gradebook.gotAllAssignmentGroups([])
     strictEqual(gradebook.setAssignmentGroupsLoaded.getCall(0).args[0], true)
   })
+
+  test('adds the assignment group to the group definitions if it is new', () => {
+    sinon.stub(gradebook, 'setAssignmentGroupsLoaded')
+    const assignmentGroup = {
+      id: '12',
+      assignments: [{id: '35', name: 'An Assignment', due_at: null}]
+    }
+    gradebook.gotAllAssignmentGroups([assignmentGroup])
+    deepEqual(gradebook.assignmentGroups['12'], assignmentGroup)
+  })
+
+  test('adds new assignments to existing assignment groups', () => {
+    sinon.stub(gradebook, 'setAssignmentGroupsLoaded')
+    gradebook.assignmentGroups['12'] = {
+      id: '12',
+      assignments: [{id: '22', name: 'Some Other Assignment', due_at: null}]
+    }
+    const assignmentGroup = {
+      id: '12',
+      assignments: [{id: '35', name: 'An Assignment', due_at: null}]
+    }
+    gradebook.gotAllAssignmentGroups([assignmentGroup])
+    const assignmentIds = gradebook.assignmentGroups['12'].assignments.map(a => a.id)
+    deepEqual(assignmentIds, ['22', '35'])
+  })
+
+  test('does not add duplicate assignments to assignment groups', () => {
+    sinon.stub(gradebook, 'setAssignmentGroupsLoaded')
+    gradebook.assignmentGroups['12'] = {
+      id: '12',
+      assignments: [{id: '35', name: 'An Assignment', due_at: null}]
+    }
+    const assignmentGroup = {
+      id: '12',
+      assignments: [{id: '35', name: 'An Assignment', due_at: null}]
+    }
+    gradebook.gotAllAssignmentGroups([assignmentGroup])
+    const assignmentIds = gradebook.assignmentGroups['12'].assignments.map(a => a.id)
+    deepEqual(assignmentIds, ['35'])
+  })
 })
 
 QUnit.module('Gradebook#handleSubmissionPostedChange', hooks => {
@@ -9751,6 +9821,80 @@ QUnit.module('Gradebook#toggleViewUngradedAsZero', hooks => {
     gradebook.toggleViewUngradedAsZero()
 
     strictEqual(gradebook.updateAllTotalColumns.callCount, 1)
+  })
+})
+
+QUnit.module('Gradebook#confirmViewUngradedAsZero', hooks => {
+  let gradebook
+
+  const confirmationDialog = () =>
+    document.querySelector('span[role=dialog][aria-label="View Ungraded as Zero"]')
+  const acceptConfirmation = () => {
+    const okButton = [...confirmationDialog().querySelectorAll('button')].find(
+      button => button.textContent === 'OK'
+    )
+    okButton.click()
+  }
+  const denyConfirmation = () => {
+    const cancelButton = [...confirmationDialog().querySelectorAll('button')].find(
+      button => button.textContent === 'Cancel'
+    )
+    cancelButton.click()
+  }
+
+  hooks.beforeEach(() => {
+    gradebook = createGradebook({
+      grid: {
+        getColumns: () => [],
+        updateCell: sinon.stub()
+      },
+      settings: {
+        allow_view_ungraded_as_zero: 'true'
+      }
+    })
+    sinon.stub(gradebook, 'toggleViewUngradedAsZero')
+  })
+
+  test('shows a confirmation dialog if not viewing ungraded as zero', async () => {
+    const promise = gradebook.confirmViewUngradedAsZero()
+
+    ok(confirmationDialog())
+    acceptConfirmation()
+    await promise
+  })
+
+  test('does not show a confirmation dialog if already viewing ungraded as zero', async () => {
+    gradebook.gridDisplaySettings.viewUngradedAsZero = true
+    const promise = gradebook.confirmViewUngradedAsZero()
+
+    notOk(confirmationDialog())
+    await promise
+  })
+
+  QUnit.module('when the confirmation is requested and accepted', () => {
+    const confirmAndAccept = async () => {
+      const promise = gradebook.confirmViewUngradedAsZero()
+      acceptConfirmation()
+      await promise
+    }
+
+    test('calls toggleViewUngradedAsZero', async () => {
+      await confirmAndAccept()
+      strictEqual(gradebook.toggleViewUngradedAsZero.callCount, 1)
+    })
+  })
+
+  QUnit.module('when the confirmation is requested and denied', () => {
+    const confirmAndDeny = async () => {
+      const promise = gradebook.confirmViewUngradedAsZero()
+      denyConfirmation()
+      await promise
+    }
+
+    test('does not call toggleViewUngradedAsZero', async () => {
+      await confirmAndDeny()
+      strictEqual(gradebook.toggleViewUngradedAsZero.callCount, 0)
+    })
   })
 })
 

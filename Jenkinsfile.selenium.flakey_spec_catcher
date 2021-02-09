@@ -26,6 +26,7 @@ def partitions = []
 def changed_tests = ''
 @groovy.transform.Field
 def fsc_status = null
+def FSC_TIMEOUT = configuration.getInteger('fsc-timeout', 20)
 
 def isPlugin() {
   return env.GERRIT_PROJECT == "canvas-lms" ? "0" : "1"
@@ -53,7 +54,6 @@ def setupNode() {
   }
 
   sh 'build/new-jenkins/docker-compose-pull.sh'
-  sh 'build/new-jenkins/docker-compose-pull-selenium.sh'
   sh 'build/new-jenkins/docker-compose-build-up.sh'
 }
 
@@ -142,13 +142,12 @@ def computeTestCount() {
 def executeFlakeySpecCatcher(prefix = 'main') {
   sh 'rm -vrf tmp'
   try {
-    timeout(30) {
-      sh 'seq 0 $((DOCKER_PROCESSES-1)) | parallel "build/new-jenkins/rspec-flakey-spec-catcher.sh {}"'
-    }
+    sh 'seq 0 $((DOCKER_PROCESSES-1)) | parallel "build/new-jenkins/rspec-flakey-spec-catcher.sh {}"'
   } catch (org.jenkinsci.plugins.workflow.steps.FlowInterruptedException e) {
     if (e.causes[0] instanceof org.jenkinsci.plugins.workflow.steps.TimeoutStepExecution.ExceededTimeout) {
-      echo "Not failing the build due to timeouts"
+      echo "Failing the build due to timeouts"
       fsc_status = 'timeout'
+      throw e
     } else if(e.causes[0] instanceof jenkins.model.CauseOfInterruption.UserInterruption) {
       echo "Build aborted"
       fsc_status = 'aborted'
@@ -178,7 +177,7 @@ def cleanupFn(status) {
     }
   } finally {
     sh 'rm -vrf ./tmp/'
-    execute 'bash/docker-cleanup.sh --allow-failure'
+    libraryScript.execute 'bash/docker-cleanup.sh --allow-failure'
   }
 }
 
@@ -186,6 +185,7 @@ pipeline {
   agent none
   options {
     ansiColor('xterm')
+    timeout(time: FSC_TIMEOUT)
     timestamps()
   }
 
@@ -200,9 +200,9 @@ pipeline {
     FORCE_FAILURE = configuration.forceFailureFSC()
     // fsc errors when running specs from gems.
     // until we figure out how to run them, we should ignore them
-    FSC_IGNORE_FILES = "gems/.*/spec/"
+    FSC_IGNORE_FILES = "gems/.*/spec/,spec/contracts/"
     POSTGRES_PASSWORD = 'sekret'
-    SELENIUM_VERSION = "3.141.59-20200719"
+    SELENIUM_VERSION = "3.141.59-20201119"
 
     // Targeting 10 minutes / node, each node runs DOCKER_PROCESSES threads and
     // repeats each test FSC_REPEAT_FACTOR times.
@@ -210,7 +210,7 @@ pipeline {
     // Assumption: selenium tests take 500ms * SELENIUM_RATIO / test
     DOCKER_PROCESSES = 3
     FSC_REPEAT_FACTOR = 10
-    MAX_NODES = 10
+    MAX_NODES = configuration.getString('fsc-max-nodes', '10')
     SELENIUM_RATIO = 20
     TESTS_PER_NODE = 200
   }
@@ -231,7 +231,7 @@ pipeline {
             stage("Run Flakey Spec Catcher") {
               if(partitions.size() == 0) {
                 return
-              } else if(partitions.size() >= env.MAX_NODES.toInteger()) {
+              } else if(partitions.size() > env.MAX_NODES.toInteger()) {
                 error "Refusing to use more than ${env.MAX_NODES} nodes to catch flakey specs. Consider breaking this change into smaller pieces."
 
                 return
@@ -260,7 +260,7 @@ pipeline {
                       }
                       finally {
                         sh 'rm -vrf ./tmp'
-                        execute 'bash/docker-cleanup.sh --allow-failure'
+                        libraryScript.execute 'bash/docker-cleanup.sh --allow-failure'
                       }
                     }
                   }

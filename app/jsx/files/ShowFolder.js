@@ -79,7 +79,8 @@ ShowFolder.renderFolderChildOrEmptyContainer = function() {
           model={child}
           isSelected={_.indexOf(this.props.selectedItems, child) >= 0}
           toggleSelected={this.props.toggleItemSelected.bind(null, child)}
-          userCanManageFilesForContext={this.props.userCanManageFilesForContext}
+          userCanEditFilesForContext={this.props.userCanEditFilesForContext}
+          userCanDeleteFilesForContext={this.props.userCanDeleteFilesForContext}
           userCanRestrictFilesForContext={this.props.userCanRestrictFilesForContext}
           usageRightsRequiredForContext={this.props.usageRightsRequiredForContext}
           externalToolsForContext={this.props.externalToolsForContext}
@@ -173,10 +174,12 @@ ShowFolder.render = function() {
         )}
         {showNewFileUpload && hasLoadedAll && (
           <>
-            <FileUpload
-              currentFolder={this.props.currentFolder}
-              filesDirectoryRef={this.props.filesDirectoryRef}
-            />
+            {this.props.userCanAddFilesForContext && (
+              <FileUpload
+                currentFolder={this.props.currentFolder}
+                filesDirectoryRef={this.props.filesDirectoryRef}
+              />
+            )}
             <ColumnHeaders
               ref="columnHeaders"
               query={this.props.query}

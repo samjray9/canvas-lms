@@ -255,13 +255,32 @@ describe ApplicationHelper do
           expect(output).to match %r{https://example.com/site_admin/account.css}
         end
 
-
         it "should not include anything if param is set to 0" do
           allow(helper).to receive(:active_brand_config).and_return BrandConfig.create!(css_overrides: 'https://example.com/path/to/overrides.css')
           params[:global_includes] = '0'
 
           output = helper.include_account_css
           expect(output).to be_nil
+        end
+
+        context "with user that doesn't work for that account" do
+          before do
+            @current_pseudonym = pseudonym_model
+            allow(@current_pseudonym).to receive(:works_for_account?).and_return(false)
+          end
+
+          it "won't render only JS" do
+            allow(helper).to receive(:active_brand_config).and_return BrandConfig.create!(css_overrides: 'https://example.com/path/to/overrides.css')
+            expect(helper.include_account_css).to be_nil
+          end
+
+          it "will not render if there's javacscript" do
+            allow(helper).to receive(:active_brand_config).and_return BrandConfig.create!(
+              css_overrides: 'https://example.com/root/account.css',
+              js_overrides: 'https://example.com/root/account.js'
+            )
+            expect(helper.include_account_css).to be_nil
+          end
         end
       end
 
@@ -361,6 +380,13 @@ describe ApplicationHelper do
 
           output = helper.include_account_js
           expect(output).to have_tag 'script', text: %r{https:\\/\\/example.com\\/site_admin\\/account.js}
+        end
+
+        it "will not render for user that doesn't work with that account" do
+          @current_pseudonym = pseudonym_model
+          allow(@current_pseudonym).to receive(:works_for_account?).and_return(false)
+          allow(helper).to receive(:active_brand_config).and_return BrandConfig.create!(js_overrides: 'https://example.com/path/to/overrides.js')
+          expect(helper.include_account_js).to be_nil
         end
 
         context "sub-accounts" do
@@ -1129,6 +1155,7 @@ describe ApplicationHelper do
 
       allow(helper).to receive(:headers).and_return(headers)
       allow(helper).to receive(:js_env) { |env| js_env.merge!(env) }
+      response.content_type = 'text/html'
     end
 
     context "on root account" do
@@ -1142,6 +1169,14 @@ describe ApplicationHelper do
         expect(headers).to_not have_key('Content-Security-Policy-Report-Only')
         expect(headers).to_not have_key('Content-Security-Policy')
         expect(js_env).not_to have_key(:csp)
+      end
+
+      it "doesn't set the CSP header for non-html requests" do
+        response.content_type = 'application/json'
+        account.enable_csp!
+        helper.add_csp_for_root
+        expect(headers).to_not have_key('Content-Security-Policy-Report-Only')
+        expect(headers).to_not have_key('Content-Security-Policy')
       end
 
       it "sets the CSP full header when active" do

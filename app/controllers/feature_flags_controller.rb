@@ -116,13 +116,14 @@
 #           "type": "string"
 #         },
 #         "state": {
-#           "description": "The policy for the feature at this context.  can be 'off', 'allowed', or 'on'.",
+#           "description": "The policy for the feature at this context.  can be 'off', 'allowed', 'allowed_on', or 'on'.",
 #           "example": "allowed",
 #           "type": "string",
 #           "allowableValues": {
 #             "values": [
 #               "off",
 #               "allowed",
+#               "allowed_on",
 #               "on"
 #             ]
 #           }
@@ -147,7 +148,7 @@ class FeatureFlagsController < ApplicationController
   # @example_request
   #
   #   curl 'http://<canvas>/api/v1/courses/1/features' \
-  #     -H "Authorization: Bearer "
+  #     -H "Authorization: Bearer <token>"
   #
   # @returns [Feature]
   def index
@@ -181,7 +182,7 @@ class FeatureFlagsController < ApplicationController
   # @example_request
   #
   #   curl 'http://<canvas>/api/v1/courses/1/features/enabled' \
-  #     -H "Authorization: Bearer "
+  #     -H "Authorization: Bearer <token>"
   #
   # @example_response
   #
@@ -192,6 +193,25 @@ class FeatureFlagsController < ApplicationController
                    select { |ff| ff.enabled? }.map(&:feature)
       render json: features
     end
+  end
+
+  # @API List environment features
+  #
+  # Return a hash of global feature settings that pertain to the
+  # Canvas user interface. This is the same information supplied to the
+  # web interface as +ENV.FEATURES+.
+  #
+  # @example_request
+  #
+  #   curl 'http://<canvas>/api/v1/features/environment' \
+  #     -H "Authorization: Bearer <token>"
+  #
+  # @example_response
+  #
+  #   { "telepathic_navigation": true, "fancy_wickets": true, "automatic_essay_grading": false }
+  #
+  def environment
+    render json: cached_js_env_account_features
   end
 
   # @API Get feature flag
@@ -205,7 +225,7 @@ class FeatureFlagsController < ApplicationController
   # @example_request
   #
   #   curl 'http://<canvas>/api/v1/courses/1/features/flags/fancy_wickets' \
-  #     -H "Authorization: Bearer "
+  #     -H "Authorization: Bearer <token>"
   #
   # @returns FeatureFlag
   def show
@@ -254,9 +274,9 @@ class FeatureFlagsController < ApplicationController
         prior_state = current_flag.state
       end
 
-      # if this is a hidden feature, require site admin privileges to create (but not update) a root account flag
+      # require site admin privileges to unhide a hidden feature
       if !current_flag && feature_def.hidden?
-        return render json: { message: "invalid feature" }, status: :bad_request unless ((@context.is_a?(Account) && @context.root_account?) || @context.is_a?(User)) && Account.site_admin.grants_right?(@current_user, session, :read)
+        return render json: { message: "invalid feature" }, status: :bad_request unless Account.site_admin.grants_right?(@current_user, session, :read)
         prior_state = 'hidden'
       end
 
@@ -293,7 +313,7 @@ class FeatureFlagsController < ApplicationController
   # @example_request
   #
   #   curl -X DELETE 'http://<canvas>/api/v1/courses/1/features/flags/fancy_wickets' \
-  #     -H "Authorization: Bearer "
+  #     -H "Authorization: Bearer <token>"
   #
   # @returns FeatureFlag
   def delete

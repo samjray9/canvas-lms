@@ -310,6 +310,10 @@ class User < ActiveRecord::Base
     end
   end
 
+  def self.public_lti_id
+    [Canvas::Security.config['lti_iss'], 'public_user'].join('/')
+  end
+
   def self.order_by_sortable_name(options = {})
     clause = sortable_name_order_by_clause
     sort_direction = options[:direction] == :descending ? 'DESC' : 'ASC'
@@ -1182,10 +1186,25 @@ class User < ActiveRecord::Base
 
   set_policy do
     given { |user| user == self }
-    can :read and can :read_grades and can :read_profile and can :read_as_admin and can :manage and
-      can :manage_content and can :manage_files and can :manage_calendar and can :send_messages and
-      can :update_avatar and can :view_feature_flags and can :manage_feature_flags and can :api_show_user and
-      can :read_email_addresses and can :view_user_logins and can :generate_observer_pairing_code
+    can :read and
+    can :read_grades and
+    can :read_profile and
+    can :read_as_admin and
+    can :manage and
+    can :manage_content and
+    can :manage_files and
+    can :manage_files_add and
+    can :manage_files_edit and
+    can :manage_files_delete and
+    can :manage_calendar and
+    can :send_messages and
+    can :update_avatar and
+    can :view_feature_flags and
+    can :manage_feature_flags and
+    can :api_show_user and
+    can :read_email_addresses and
+    can :view_user_logins and
+    can :generate_observer_pairing_code
 
     given { |user| user == self && user.user_can_edit_name? }
     can :rename
@@ -1319,11 +1338,6 @@ class User < ActiveRecord::Base
   def management_contexts
     contexts = [self] + self.courses + self.groups.active + self.all_courses_for_active_enrollments
     contexts.uniq
-  end
-
-  def file_management_contexts
-    contexts = [self] + self.courses + self.groups.active + self.all_courses
-    contexts.uniq.select{|c| c.grants_right?(self, nil, :manage_files) }
   end
 
   def update_avatar_image(force_reload=false)
@@ -2190,13 +2204,24 @@ class User < ActiveRecord::Base
       events += select_available_assignments(
         select_upcoming_assignments(assignments.map {|a| a.overridden_for(self)}, opts.merge(:time => now))
       )
-
     end
-    events.sort_by{|e| [e.start_at ? 0: 1,e.start_at || 0, Canvas::ICU.collation_key(e.title)] }.uniq.first(opts[:limit])
+
+    sorted_events = events.sort_by do |e|
+      due_date = e.start_at
+      if e.respond_to? :dates_hash_visible_to
+        e.dates_hash_visible_to(self).any? do |due_hash|
+          due_date = due_hash[:due_at] if due_hash[:due_at]
+        end
+      end
+      [due_date ? 0 : 1, due_date || 0, Canvas::ICU.collation_key(e.title)]
+    end
+
+    sorted_events.uniq.first(opts[:limit])
   end
 
   def select_available_assignments(assignments, include_concluded: false)
     return [] if assignments.empty?
+
     available_course_ids = if include_concluded
                             all_course_ids
                           else
@@ -2628,15 +2653,22 @@ class User < ActiveRecord::Base
   end
 
   def can_create_enrollment_for?(course, session, type)
+    granular_admin = course.root_account.feature_enabled?(:granular_permissions_manage_admin_users)
     return false if type == "StudentEnrollment" && MasterCourses::MasterTemplate.is_master_course?(course)
-    if type != "StudentEnrollment" && course.grants_right?(self, session, :manage_admin_users)
+    if !granular_admin && type != "StudentEnrollment" && course.grants_right?(self, session, :manage_admin_users)
       return true
+    end
+    if granular_admin
+      return true if type == 'TaEnrollment' && course.grants_right?(self, session, :add_ta_to_course)
+      return true if type == 'DesignerEnrollment' && course.grants_right?(self, session, :add_designer_to_course)
+      return true if type == 'ObserverEnrollment' && course.grants_right?(self, session, :add_observer_to_course)
     end
     if course.grants_right?(self, session, :manage_students)
       if %w{StudentEnrollment ObserverEnrollment}.include?(type) || (type == 'TeacherEnrollment' && course.teacherless?)
         return true
       end
     end
+    false
   end
 
   def can_be_enrolled_in_course?(course)
@@ -3056,6 +3088,14 @@ class User < ActiveRecord::Base
       break unless ObserverPairingCode.active.where(code: code).exists?
     end
     observer_pairing_codes.create(expires_at: 7.days.from_now, code: code)
+  end
+
+  def observation_link?(student, root_account = nil)
+    return true if self.id == student.id
+
+    scope = self.as_observer_observation_links.where(student: student)
+    scope = scope.for_root_accounts(root_account) if root_account
+    scope.any?
   end
 
   def pronouns

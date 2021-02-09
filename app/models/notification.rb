@@ -256,7 +256,7 @@ class Notification < ActiveRecord::Base
   end
 
   def self.types_to_send_in_push
-    Setting.get('allowed_sms_notification_types', ALLOWED_PUSH_NOTIFICATION_TYPES.join(',')).split(',')
+    Setting.get('allowed_push_notification_types', ALLOWED_PUSH_NOTIFICATION_TYPES.join(',')).split(',')
   end
 
   def show_in_feed?
@@ -303,7 +303,7 @@ class Notification < ActiveRecord::Base
 
   # Return a hash with information for a related user option if one exists.
   def related_user_setting(user, root_account)
-    if self.category == 'Grading' && root_account.settings[:allow_sending_scores_in_emails] != false
+    if user.present? && self.category == 'Grading' && root_account.settings[:allow_sending_scores_in_emails] != false
       {
         name: :send_scores_in_emails,
         value: user.preferences[:send_scores_in_emails],

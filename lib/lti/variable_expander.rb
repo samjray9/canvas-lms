@@ -326,8 +326,10 @@ module Lti
     register_expansion 'Context.sourcedId', [],
                        -> { @context.sis_source_id }
 
-    # return a string with a comma-separeted list of the context ids of the
-    # courses in reverse chronological order from which content has been copied
+    # Returns a string with a comma-separated list of the context ids of the
+    # courses in reverse chronological order from which content has been copied.
+    # Will show a limit of 1000 context ids.  When the number passes 1000,
+    # 'truncated' will show at the end of the list.
     # @example
     #   ```
     #   "789,456,123"
@@ -576,6 +578,15 @@ module Lti
                        -> { @context.sis_source_id },
                        COURSE_GUARD
 
+    # returns the current course integration id.
+    # @example
+    #   ```
+    #   1234
+    #   ```
+    register_expansion 'com.instructure.Course.integrationId', [],
+                       -> { @context.integration_id },
+                       COURSE_GUARD
+
     # returns the current course start date.
     # @example
     #   ```
@@ -720,6 +731,7 @@ module Lti
                        COURSE_GUARD
 
     # With respect to the current course, recursively returns the context ids of the courses from which content has been copied (excludes cartridge imports).
+    # Will show a limit of 1000 context ids.  When the number passes 1000, 'truncated' will show at the end of the list.
     #
     # @example
     #   ```

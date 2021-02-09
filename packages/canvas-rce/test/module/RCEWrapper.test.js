@@ -126,12 +126,15 @@ describe('RCEWrapper', () => {
       getContent: () => editor.content,
       getBody: () => editor.content,
       hidden: false,
+      hide: () => (editor.hidden = true),
+      show: () => (editor.hidden = false),
       isHidden: () => {
         return editor.hidden
       },
       execCommand: editorCommandSpy,
       serializer: {serialize: sinon.stub()},
-      ui: {registry: {addIcon: () => {}}}
+      ui: {registry: {addIcon: () => {}}},
+      isDirty: () => false
     }
 
     fakeTinyMCE = {
@@ -340,10 +343,10 @@ describe('RCEWrapper', () => {
         }
 
         const imageMarkup = `
-    <div
+    <span
       aria-label="Loading"
       data-placeholder-for="green_square"
-      style="width: 10px; height: 10px;"
+      style="width: 10px; height: 10px; vertical-align: middle;"
     >`
         instance.insertImagePlaceholder(props)
         sinon.assert.calledWith(
@@ -368,10 +371,10 @@ describe('RCEWrapper', () => {
         }
 
         const imageMarkup = `
-    <div
+    <span
       aria-label="Loading"
       data-placeholder-for="filename%20%22with%22%20quotes"
-      style="width: 10px; height: 10px;"
+      style="width: 10px; height: 10px; vertical-align: middle;"
     >`
         instance.insertImagePlaceholder(props)
         sinon.assert.calledWith(
@@ -396,10 +399,10 @@ describe('RCEWrapper', () => {
         }
 
         const imageMarkup = `
-    <div
+    <span
       aria-label="Loading"
       data-placeholder-for="green_square"
-      style="width: 500px; height: 500px;"
+      style="width: 500px; height: 500px; vertical-align: middle;"
     >`
         instance.insertImagePlaceholder(props)
         sinon.assert.calledWith(
@@ -419,10 +422,10 @@ describe('RCEWrapper', () => {
         }
 
         const imageMarkup = `
-    <div
+    <span
       aria-label="Loading"
       data-placeholder-for="file.txt"
-      style="width: 8rem; height: 1rem;"
+      style="width: 8rem; height: 1rem; vertical-align: middle;"
     >`
         instance.insertImagePlaceholder(props)
         sinon.assert.calledWith(
@@ -440,10 +443,10 @@ describe('RCEWrapper', () => {
           contentType: 'video/quicktime'
         }
         const imageMarkup = `
-    <div
+    <span
       aria-label="Loading"
       data-placeholder-for="file.mov"
-      style="width: 400px; height: 225px;"
+      style="width: 400px; height: 225px; vertical-align: bottom;"
     >`
         instance.insertImagePlaceholder(props)
         sinon.assert.calledWith(
@@ -461,10 +464,10 @@ describe('RCEWrapper', () => {
           contentType: 'audio/mp3'
         }
         const imageMarkup = `
-    <div
+    <span
       aria-label="Loading"
       data-placeholder-for="file.mp3"
-      style="width: 320px; height: 14.25rem;"
+      style="width: 320px; height: 14.25rem; vertical-align: bottom;"
     >`
         instance.insertImagePlaceholder(props)
         sinon.assert.calledWith(
@@ -489,10 +492,10 @@ describe('RCEWrapper', () => {
         }
 
         const imageMarkup = `
-    <div
+    <span
       aria-label="Loading"
       data-placeholder-for="square.png"
-      style="width: 10rem; height: 1rem;"
+      style="width: 10rem; height: 1rem; vertical-align: middle;"
     >`
         instance.insertImagePlaceholder(props)
         sinon.assert.calledWith(
@@ -681,7 +684,9 @@ describe('RCEWrapper', () => {
 
   describe('is_dirty()', () => {
     it('is true if not hidden and defaultContent is not equal to getConent()', () => {
-      const c = createBasicElement({defaultContent: 'different'})
+      editor.serializer.serialize.returns(editor.content)
+      const c = createBasicElement()
+      c.setCode('different')
       editor.hidden = false
       assert(c.is_dirty())
     })
@@ -703,7 +708,7 @@ describe('RCEWrapper', () => {
     it('is false if hidden and defaultContent is equal to textarea value', () => {
       const defaultContent = 'default content'
       editor.serializer.serialize.returns(defaultContent)
-      const c = createBasicElement({textareaId, defaultContent})
+      const c = createBasicElement({textareaId, defaultContent, editorView: 'RAW'})
       editor.hidden = true
       document.getElementById(textareaId).value = defaultContent
       assert(!c.is_dirty())

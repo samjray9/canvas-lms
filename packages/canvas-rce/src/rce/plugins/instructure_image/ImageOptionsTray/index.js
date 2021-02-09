@@ -28,9 +28,10 @@ import {CUSTOM, MIN_HEIGHT, MIN_WIDTH, scaleToSize} from '../ImageEmbedOptions'
 import formatMessage from '../../../../format-message'
 import {useDimensionsState} from '../../shared/DimensionsInput'
 import ImageOptionsForm from '../../shared/ImageOptionsForm'
+import {getTrayHeight} from '../../shared/trayUtils'
 
 export default function ImageOptionsTray(props) {
-  const {imageOptions, onRequestClose, open} = props
+  const {imageOptions, onEntered, onExited, onRequestClose, onSave, open} = props
 
   const {naturalHeight, naturalWidth, isLinked} = imageOptions
   const currentHeight = imageOptions.appliedHeight || naturalHeight
@@ -83,7 +84,7 @@ export default function ImageOptionsTray(props) {
       appliedWidth = dimensionsState.width
     }
 
-    props.onSave({
+    onSave({
       altText: savedAltText,
       appliedHeight,
       appliedWidth,
@@ -105,15 +106,15 @@ export default function ImageOptionsTray(props) {
       data-mce-component
       label={formatMessage('Image Options Tray')}
       onDismiss={onRequestClose}
-      onEntered={props.onEntered}
-      onExited={props.onExited}
+      onEntered={onEntered}
+      onExited={onExited}
       open={open}
       placement="end"
       shouldCloseOnDocumentClick
       shouldContainFocus
       shouldReturnFocus
     >
-      <Flex direction="column" height="100vh">
+      <Flex direction="column" height={getTrayHeight()}>
         <Flex.Item as="header" padding="medium">
           <Flex direction="row">
             <Flex.Item grow shrink>
@@ -130,6 +131,7 @@ export default function ImageOptionsTray(props) {
 
         <Flex.Item as="form" grow margin="none" shrink>
           <ImageOptionsForm
+            id="image-options-form"
             imageSize={imageSize}
             displayAs={displayAs}
             isDecorativeImage={isDecorativeImage}

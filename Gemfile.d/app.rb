@@ -25,7 +25,7 @@ else
   gem 'rails', '6.0.3.4'
 end
 
-gem 'academic_benchmarks', '0.0.11', require: false
+gem 'academic_benchmarks', '1.0.1', require: false
 gem 'active_model-better_errors', '1.6.7', require: 'active_model/better_errors'
 gem 'active_model_serializers', '0.9.0alpha1',
   github: 'rails-api/active_model_serializers', ref: '61882e1e4127facfe92e49057aec71edbe981829'
@@ -74,14 +74,17 @@ gem 'inst_statsd', '2.1.6'
   gem 'statsd-ruby', '1.4.0', require: false
   gem 'aroi', '0.0.7', require: false
   gem 'dogstatsd-ruby', '4.8.2'
-gem 'inst-jobs', '1.0.4'
+gem 'inst-jobs', '2.2.0'
   gem 'fugit', '1.4.0', require: false
     gem 'et-orbi', '1.2.4', require: false
-gem 'inst-jobs-autoscaling', '2.0.0'
+gem 'inst-jobs-autoscaling', '2.1.0'
   gem 'aws-sdk-autoscaling', '1.49.0', require: false
-gem 'inst-jobs-statsd', '2.0.0'
-gem 'json', '2.3.1'
-gem 'json_schemer', '0.2.16'
+gem 'inst-jobs-statsd', '2.1.0'
+# if updating json gem it will need to be hotfixed because if a newer version of
+# the json gem is installed, it will always use that one even before bundler
+# gets activated. Updating the gem in it's own commit will make this easier.
+gem 'json', '2.5.1'
+gem 'json_schemer', '0.2.16', github: 'robotdana/json_schemer', ref: '0d2ac359a87964f74c07a14cafeb98cfcae4e29f'
 gem 'json-jwt', '1.13.0', require: false
 gem 'link_header', '0.0.8'
 gem 'mail', '2.7.1', require: false
@@ -118,9 +121,9 @@ gem 'sanitize', '2.1.1', require: false
 gem 'sentry-raven', '2.13.0', require: false
 gem 'guardrail', '2.0.1'
 gem 'simple_oauth', '0.3.1', require: false
-gem 'switchman', '2.0.2'
+gem 'switchman', '2.0.3'
   gem 'open4', '1.3.4', require: false
-gem 'switchman-inst-jobs', '3.0.4'
+gem 'switchman-inst-jobs', '3.1.2'
 gem 'twilio-ruby', '5.36.0', require: false
 gem 'tzinfo', '1.2.7'
 gem 'vault', '0.15.0', require: false

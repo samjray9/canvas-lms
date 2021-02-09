@@ -345,7 +345,7 @@ class CoursesController < ApplicationController
 
   before_action :require_user, :only => [:index, :activity_stream, :activity_stream_summary, :effective_due_dates, :offline_web_exports, :start_offline_web_export]
   before_action :require_user_or_observer, :only=>[:user_index]
-  before_action :require_context, :only => [:roster, :locks, :create_file, :ping, :effective_due_dates, :offline_web_exports, :start_offline_web_export]
+  before_action :require_context, :only => [:roster, :locks, :create_file, :ping, :effective_due_dates, :offline_web_exports, :start_offline_web_export, :user_progress]
   skip_after_action :update_enrollment_last_activity_at, only: [:enrollment_invitation, :activity_stream_summary]
 
   include Api::V1::Course
@@ -632,6 +632,24 @@ class CoursesController < ApplicationController
   def user_index
     GuardRail.activate(:secondary) do
       render json: courses_for_user(@user, paginate_url: api_v1_user_courses_url(@user))
+    end
+  end
+
+  # @API Get user progress
+  # Return progress information for the user and course
+  #
+  # You can supply +self+ as the user_id to query your own progress in a course. To query another user's progress,
+  # you must be a teacher in the course, an administrator, or a linked observer of the user.
+  #
+  # @returns CourseProgress
+  def user_progress
+    # NOTE: this endpoint must remain on the primary db since it's queried in response to a live event
+    target_user = api_find(@context.users, params[:user_id])
+    if @context.grants_right?(@current_user, session, :view_all_grades) || target_user.grants_right?(@current_user, session, :read)
+      json = CourseProgress.new(@context, target_user, read_only: true).to_json
+      render :json => json, :status => json.key?(:error) ? :bad_request : :ok
+    else
+      render_unauthorized_action
     end
   end
 
@@ -1125,7 +1143,7 @@ class CoursesController < ApplicationController
     reject!('Search term required') unless params[:search_term]
     return unless authorized_action(@context, @current_user, :read_as_admin)
 
-    users_scope = User.shard(Shard.current).where.not(id: @current_user.id).active.distinct
+    users_scope = User.shard(Shard.current).active.distinct
     union_scope = teacher_scope(name_scope(users_scope), @context.root_account_id).
       union(
         teacher_scope(email_scope(users_scope), @context.root_account_id),
@@ -1350,7 +1368,8 @@ class CoursesController < ApplicationController
   #     "hide_distribution_graphs": false,
   #     "hide_sections_on_course_users_page": false,
   #     "lock_all_announcements": true,
-  #     "usage_rights_required": false
+  #     "usage_rights_required": false,
+  #     "homeroom_course": false
   #   }
   def api_settings
     get_context
@@ -1375,6 +1394,18 @@ class CoursesController < ApplicationController
       add_crumb(t('#crumbs.settings', "Settings"), named_context_url(@context, :context_details_url))
 
       course_card_images_enabled = @context.feature_enabled?(:course_card_images)
+      js_permissions = {
+        :manage_students => @context.grants_right?(@current_user, session, :manage_students),
+        :manage_account_settings => @context.account.grants_right?(@current_user, session, :manage_account_settings),
+        :create_tool_manually => @context.grants_right?(@current_user, session, :create_tool_manually),
+        :manage_feature_flags => @context.grants_right?(@current_user, session, :manage_feature_flags),
+        :manage => @context.grants_right?(@current_user, session, :manage)
+      }
+      if @context.root_account.feature_enabled?(:granular_permissions_manage_admin_users)
+        js_permissions[:allow_course_admin_actions] = @context.grants_right?(@current_user, session, :allow_course_admin_actions)
+      else
+        js_permissions[:manage_admin_users] = @context.grants_right?(@current_user, session, :manage_admin_users)
+      end
       js_env({
         COURSE_ID: @context.id,
         USERS_URL: "/api/v1/courses/#{@context.id}/users",
@@ -1383,13 +1414,7 @@ class CoursesController < ApplicationController
         SEARCH_URL: search_recipients_url,
         CONTEXTS: @contexts,
         USER_PARAMS: {:include => ['email', 'enrollments', 'locked', 'observed_users']},
-        PERMISSIONS: {
-          :manage_students => @context.grants_right?(@current_user, session, :manage_students),
-          :manage_admin_users => @context.grants_right?(@current_user, session, :manage_admin_users),
-          :manage_account_settings => @context.account.grants_right?(@current_user, session, :manage_account_settings),
-          :create_tool_manually => @context.grants_right?(@current_user, session, :create_tool_manually),
-          :manage_feature_flags => @context.grants_right?(@current_user, session, :manage_feature_flags)
-        },
+        PERMISSIONS: js_permissions,
         APP_CENTER: {
           enabled: Canvas::Plugin.find(:app_center).enabled?
         },
@@ -1401,7 +1426,11 @@ class CoursesController < ApplicationController
         PUBLISHING_ENABLED: @publishing_enabled,
         COURSE_IMAGES_ENABLED: course_card_images_enabled,
         use_unsplash_image_search: course_card_images_enabled && PluginSetting.settings_for_plugin(:unsplash)&.dig('access_key')&.present?,
-        COURSE_VISIBILITY_OPTION_DESCRIPTIONS: @context.course_visibility_option_descriptions
+        COURSE_VISIBILITY_OPTION_DESCRIPTIONS: @context.course_visibility_option_descriptions,
+        NEW_FEATURES_UI: Account.site_admin.feature_enabled?(:new_features_ui),
+        NEW_COURSE_AVAILABILITY_UI: Account.site_admin.feature_enabled?(:new_course_availability_ui),
+        RESTRICT_STUDENT_PAST_VIEW_LOCKED: @context.account.restrict_student_past_view[:locked],
+        RESTRICT_STUDENT_FUTURE_VIEW_LOCKED: @context.account.restrict_student_future_view[:locked]
       })
 
       set_tutorial_js_env
@@ -1541,7 +1570,8 @@ class CoursesController < ApplicationController
       :restrict_student_future_view,
       :show_announcements_on_home_page,
       :syllabus_course_summary,
-      :home_page_announcement_limit
+      :home_page_announcement_limit,
+      :homeroom_course
     )
     changes = changed_settings(@course.changes, @course.settings, old_settings)
     @course.delay_if_production(priority: Delayed::LOW_PRIORITY).
@@ -1613,7 +1643,7 @@ class CoursesController < ApplicationController
 
   def re_send_invitations
     get_context
-    if authorized_action(@context, @current_user, [:manage_students, :manage_admin_users])
+    if authorized_action(@context, @current_user, [:manage_students, manage_admin_users_perm])
       @context.delay_if_production.re_send_invitations!(@current_user)
 
       respond_to do |format|
@@ -2021,10 +2051,7 @@ class CoursesController < ApplicationController
           js_env(:SHOW_ANNOUNCEMENTS => true, :ANNOUNCEMENT_LIMIT => @context.home_page_announcement_limit)
         end
 
-        if @domain_root_account&.feature_enabled?(:mute_notifications_by_course) && params[:view] == 'notifications'
-          render_course_notification_settings
-          return
-        end
+        return render_course_notification_settings if params[:view] == 'notifications'
 
         @contexts = [@context]
         case @course_home_view
@@ -2131,8 +2158,6 @@ class CoursesController < ApplicationController
     js_env(
       course_name: @context.name,
       NOTIFICATION_PREFERENCES_OPTIONS: {
-        granular_course_preferences_enabled: Account.site_admin.feature_enabled?(:notification_granular_course_preferences),
-        deprecate_sms_enabled: !@domain_root_account.settings[:sms_allowed] && Account.site_admin.feature_enabled?(:deprecate_sms),
         reduce_push_enabled: Account.site_admin.feature_enabled?(:reduce_push_notifications),
         allowed_sms_categories: Notification.categories_to_send_in_sms(@domain_root_account),
         allowed_push_categories: Notification.categories_to_send_in_push,
@@ -2169,7 +2194,7 @@ class CoursesController < ApplicationController
     get_context
     @enrollment = @context.enrollments.find(params[:id])
     can_remove = @enrollment.is_a?(StudentEnrollment) && @context.grants_right?(@current_user, session, :manage_students)
-    can_remove ||= @context.grants_right?(@current_user, session, :manage_admin_users)
+    can_remove ||= @context.grants_right?(@current_user, session, manage_admin_users_perm)
     if can_remove
       respond_to do |format|
         if @enrollment.unconclude
@@ -2186,7 +2211,7 @@ class CoursesController < ApplicationController
   def limit_user
     get_context
     @user = @context.users.find(params[:id])
-    if authorized_action(@context, @current_user, :manage_admin_users)
+    if authorized_action(@context, @current_user, manage_admin_users_perm)
       if params[:limit] == "1"
         Enrollment.limit_privileges_to_course_section!(@context, @user, true)
         render :json => {:limited => true}
@@ -2287,7 +2312,7 @@ class CoursesController < ApplicationController
 
   def link_enrollment
     get_context
-    if authorized_action(@context, @current_user, :manage_admin_users)
+    if authorized_action(@context, @current_user, manage_admin_users_perm)
       enrollment = @context.observer_enrollments.find(params[:enrollment_id])
       student = nil
       student = @context.students.find(params[:student_id]) if params[:student_id] != 'none'
@@ -2302,7 +2327,7 @@ class CoursesController < ApplicationController
     get_context
     @enrollment = @context.enrollments.find(params[:id])
     can_move = [StudentEnrollment, ObserverEnrollment].include?(@enrollment.class) && @context.grants_right?(@current_user, session, :manage_students)
-    can_move ||= @context.grants_right?(@current_user, session, :manage_admin_users)
+    can_move ||= @context.grants_right?(@current_user, session, manage_admin_users_perm)
     can_move &&= @context.grants_any_right?(@current_user, session, :manage_account_settings, :manage_sis) if @enrollment.defined_by_sis?
     if can_move
       respond_to do |format|
@@ -2572,6 +2597,9 @@ class CoursesController < ApplicationController
   #   Example usage:
   #     course[blueprint_restrictions_by_object_type][assignment][content]=1
   #
+  # @argument course[homeroom_course] [Boolean]
+  #   Sets the course as a homeroom course. The setting takes effect only when the Canvas for Elementary feature
+  #   is enabled in the course's account.
   #
   # @example_request
   #   curl https://<canvas>/api/v1/courses/<course_id> \
@@ -3338,6 +3366,12 @@ class CoursesController < ApplicationController
 
     permissions_to_precalculate = [:read_sis, :manage_sis]
     permissions_to_precalculate += SectionTabHelper::PERMISSIONS_TO_PRECALCULATE if includes.include?('tabs')
+    # TODO: move granular file permissions to SectionTabHelper::PERMISSIONS_TO_PRECALCULATE
+    # after :manage_files gets removed from role overrides
+    if @domain_root_account.feature_enabled?(:granular_permissions_course_files) && includes.include?('tabs')
+      permissions_to_precalculate += RoleOverride::GRANULAR_FILE_PERMISSIONS
+    end
+
     all_precalculated_permissions = @current_user.precalculate_permissions_for_courses(courses, permissions_to_precalculate)
     Course.preload_menu_data_for(courses, @current_user, preload_favorites: true)
 
@@ -3405,6 +3439,12 @@ class CoursesController < ApplicationController
     params.permit(assignment_ids: [])
   end
 
+  def manage_admin_users_perm
+    @context.root_account.feature_enabled?(:granular_permissions_manage_admin_users) ?
+      :allow_course_admin_actions :
+      :manage_admin_users
+  end
+
   def course_params
     return {} unless params[:course]
     params[:course].permit(:name, :group_weighting_scheme, :start_at, :conclude_at,
@@ -3416,7 +3456,7 @@ class CoursesController < ApplicationController
       :restrict_student_past_view, :restrict_student_future_view, :grading_standard, :grading_standard_enabled,
       :locale, :integration_id, :hide_final_grades, :hide_distribution_graphs, :hide_sections_on_course_users_page, :lock_all_announcements, :public_syllabus,
       :quiz_engine_selected, :public_syllabus_to_auth, :course_format, :time_zone, :organize_epub_by_content_type, :enable_offline_web_export,
-      :show_announcements_on_home_page, :home_page_announcement_limit, :allow_final_grade_override, :filter_speed_grader_by_student_group
+      :show_announcements_on_home_page, :home_page_announcement_limit, :allow_final_grade_override, :filter_speed_grader_by_student_group, :homeroom_course
     )
   end
 end

@@ -300,22 +300,6 @@ RSpec.describe ApplicationController do
         end
       end
 
-      context "bulk_delete_pages" do
-        before(:each) do
-          controller.instance_variable_set(:@domain_root_account, Account.default)
-        end
-
-        it 'is false if the feature flag is off' do
-          Account.default.disable_feature!(:bulk_delete_pages)
-          expect(controller.js_env[:FEATURES][:bulk_delete_pages]).to be_falsey
-        end
-
-        it 'is true if the feature flag is on' do
-          Account.default.enable_feature!(:bulk_delete_pages)
-          expect(controller.js_env[:FEATURES][:bulk_delete_pages]).to be_truthy
-        end
-      end
-
       context "usage_rights_discussion_topics" do
         before(:each) do
           controller.instance_variable_set(:@domain_root_account, Account.default)
@@ -432,6 +416,12 @@ RSpec.describe ApplicationController do
     end
   end
 
+  describe "response_code_for_rescue" do
+    it "maps certain exceptions declared outside core canvas to known codes" do
+      e = CanvasHttp::CircuitBreakerError.new
+      expect(controller.send(:response_code_for_rescue, e)).to eq(502)
+    end
+  end
   describe "#reject!" do
     it "sets the message and status in the error json" do
       expect { controller.reject!('test message', :not_found) }.to(raise_error(RequestError) do |e|
@@ -739,7 +729,8 @@ RSpec.describe ApplicationController do
           content_id: 44,
           tag_type: 'context_module',
           context_type: 'Account',
-          context_id: 1
+          context_id: 1,
+          root_account_id: Account.default
         }.merge(overrides)
       )
     end
@@ -756,6 +747,24 @@ RSpec.describe ApplicationController do
       expect(controller).to receive(:named_context_url).with(Account.default, :context_assignment_url, 44, {module_item_id: 42}).and_return('nil')
       allow(controller).to receive(:redirect_to)
       controller.send(:content_tag_redirect, Account.default, tag, nil)
+    end
+
+    context 'when manage and new_quizzes_modules_support enabled' do
+      let(:course){ course_model }
+
+      before do
+        controller.instance_variable_set(:"@context", course)
+        allow(course).to receive(:grants_right?).and_return true
+        Account.site_admin.enable_feature!(:new_quizzes_modules_support)
+      end
+
+      it 'redirects to edit for a quiz_lti assignment' do
+        tag = create_tag(content_type: 'Assignment')
+        allow(tag).to receive(:quiz_lti).and_return true
+        expect(controller).to receive(:named_context_url).with(Account.default, :edit_context_assignment_url, 44, {module_item_id: 42}).and_return('nil')
+        allow(controller).to receive(:redirect_to)
+        controller.send(:content_tag_redirect, Account.default, tag, nil)
+      end
     end
 
     it 'redirects for a quiz' do
@@ -1031,9 +1040,18 @@ RSpec.describe ApplicationController do
           end
 
           context 'module items' do
-            before { content_tag.update!(context: course.account) }
+            before do
+              content_tag.update!(
+                context: course,
+                associated_asset: Lti::ResourceLink.create_with(course, tool, abc: 'def')
+              )
+            end
 
-            it_behaves_like 'a placement that caches the launch'
+            it_behaves_like 'a placement that caches the launch' do
+              it 'sets link-level custom parameters' do
+                expect(cached_launch["https://purl.imsglobal.org/spec/lti/claim/custom"]).to include('abc' => 'def')
+              end
+            end
           end
           # rubocop:enable RSpec/NestedGroups
         end

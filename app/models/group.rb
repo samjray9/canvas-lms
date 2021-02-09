@@ -35,6 +35,7 @@ class Group < ActiveRecord::Base
 
   has_many :group_memberships, -> { where("group_memberships.workflow_state<>'deleted'") }, dependent: :destroy
   has_many :users, -> { where("users.workflow_state<>'deleted'") }, through: :group_memberships
+  has_many :user_past_lti_ids, as: :context, inverse_of: :context
   has_many :participating_group_memberships, -> { where(workflow_state: 'accepted') }, class_name: "GroupMembership"
   has_many :participating_users, :source => :user, :through => :participating_group_memberships
   belongs_to :context, polymorphic: [:course, { context_account: 'Account' }]
@@ -503,6 +504,9 @@ class Group < ActiveRecord::Base
     can :manage_calendar and
     can :manage_content and
     can :manage_files and
+    can :manage_files_add and
+    can :manage_files_edit and
+    can :manage_files_delete and
     can :manage_wiki_create and
     can :manage_wiki_delete and
     can :manage_wiki_update and
@@ -564,6 +568,9 @@ class Group < ActiveRecord::Base
       can :manage_calendar and
       can :manage_content and
       can :manage_files and
+      can :manage_files_add and
+      can :manage_files_edit and
+      can :manage_files_delete and
       can :manage_students and
       can :manage_wiki_create and
       can :manage_wiki_delete and

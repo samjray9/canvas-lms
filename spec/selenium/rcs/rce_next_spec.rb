@@ -54,6 +54,15 @@ describe 'RCE next tests', ignore_js_errors: true do
       )
     end
 
+    def add_embedded_image(image_name)
+      root_folder = Folder.root_folders(@course).first
+      image = root_folder.attachments.build(context: @course)
+      path = File.expand_path(File.dirname(__FILE__) + "/../../../public/images/#{image_name}")
+      image.uploaded_data = Rack::Test::UploadedFile.new(path, Attachment.mimetype(path))
+      image.save!
+      image
+    end
+
     def click_embedded_image_for_options
       in_frame tiny_rce_ifr_id do
         f('img').click
@@ -510,6 +519,38 @@ describe 'RCE next tests', ignore_js_errors: true do
         end
       end
 
+      it 'should close links tray if open when opening link options' do
+        skip('still flakey. Needs to be addressed in LS-1814')
+        visit_front_page_edit(@course)
+        wait_for_tiny(edit_wiki_css)
+
+        switch_to_html_view
+        html_view = f('textarea#wiki_page_body')
+        html_view.send_keys('<h2>This is plain text</h2><a href="http://example.com">edit me</a>')
+        switch_to_editor_view
+
+        def switch_trays
+          click_links_toolbar_menu_button
+          click_course_links
+          wait_for_ajaximations
+          expect(course_links_tray).to be_displayed
+
+          click_link_for_options
+          click_link_options_button
+
+          expect(link_options_tray).to be_displayed
+          validate_course_links_tray_closed
+
+          driver.switch_to.frame('wiki_page_body_ifr')
+          f('h2').click
+          driver.switch_to.default_content
+        end
+
+        # Duplicate trays only appear sporadically, so repeat this several times to make sure
+        # we aren't getting multiple trays open at once.
+        3.times { switch_trays }
+      end
+
       it 'should display assignment publish status in links accordion' do
         title = 'Assignment-Title'
         @assignment = @course.assignments.create!(name: title, workflow_state: 'published')
@@ -543,6 +584,126 @@ describe 'RCE next tests', ignore_js_errors: true do
         click_assignments_accordion
         wait_for_ajaximations
         expect(assignment_due_date_exists?(due_at)).to eq true
+      end
+    end
+
+    context 'sidebar search' do
+      it 'should search for wiki course link to create link in body', ignore_js_errors: true do
+        title = 'test_page'
+        title2 = 'test_page2'
+        unpublished = false
+        edit_roles = 'public'
+
+        create_wiki_page(title, unpublished, edit_roles)
+        create_wiki_page(title2, unpublished, edit_roles)
+
+        visit_front_page_edit(@course)
+        wait_for_tiny(edit_wiki_css)
+
+        click_links_toolbar_menu_button
+        click_course_links
+
+        click_pages_accordion
+
+        expect(course_item_links_list.count).to eq(2)
+        enter_search_data('ge2')
+
+        expect(course_item_links_list.count).to eq(1)
+
+        click_course_item_link(title2)
+
+        in_frame rce_page_body_ifr_id do
+          expect(wiki_body_anchor.attribute('title')).to include title2
+          expect(wiki_body_anchor.text).to eq title2
+        end
+      end
+
+      it 'should search for document link to add to body', ignore_js_errors: true do
+        title1 = 'text_file1.txt'
+        title2 = 'text_file2.txt'
+        create_course_text_file(title1)
+        create_course_text_file(title2)
+
+        visit_front_page_edit(@course)
+
+        click_document_toolbar_menu_button
+        click_course_documents
+
+        expect(course_document_links.count).to eq(2)
+
+        enter_search_data('le2')
+
+        expect(course_document_links.count).to eq(1)
+
+        click_document_link(title2)
+
+        in_frame tiny_rce_ifr_id do
+          expect(wiki_body_anchor.attribute('href')).to include course_file_id_path(@text_file)
+        end
+      end
+
+      it 'should search for an image in sidebar in image tray', ignore_js_errors: true do
+        title1 = 'email.png'
+        title2 = 'image_icon.gif'
+        add_embedded_image(title1)
+        image2 = add_embedded_image(title2)
+
+        visit_front_page_edit(@course)
+
+        click_images_toolbar_menu_button
+        click_course_images
+        wait_for_ajaximations
+
+        expect(image_links.count).to eq(2)
+
+        enter_search_data('ico')
+
+        expect(image_links.count).to eq(1)
+
+        click_image_link(title2)
+
+        in_frame tiny_rce_ifr_id do
+          expect(wiki_body_image.attribute('src')).to include course_file_id_path(image2)
+        end
+      end
+
+      it 'should search for items when different accordian section opened',
+         ignore_js_errors: true do
+        # Add two pages
+        title = 'test_page'
+        title2 = 'icon_page'
+        unpublished = false
+        edit_roles = 'public'
+
+        create_wiki_page(title, unpublished, edit_roles)
+        create_wiki_page(title2, unpublished, edit_roles)
+
+        # Add two assignments
+        title = 'icon assignment'
+        title2 = 'random assignment'
+        @course.assignments.create!(name: title)
+        @course.assignments.create!(name: title2)
+
+        # Add two images
+        title1 = 'email.png'
+        title2 = 'image_icon.gif'
+        add_embedded_image(title1)
+        add_embedded_image(title2)
+
+        visit_front_page_edit(@course)
+        click_links_toolbar_menu_button
+        click_course_links
+        enter_search_data('ico')
+        click_pages_accordion
+        expect(course_item_links_list.count).to eq(1)
+
+        click_assignments_accordion
+        expect(course_item_links_list.count).to eq(1)
+
+        change_content_tray_content_type('Files')
+        change_content_tray_content_subtype('Images')
+        change_content_tray_content_type('Course Files')
+        expect(image_links.count).to eq(1)
       end
     end
 
@@ -610,6 +771,39 @@ describe 'RCE next tests', ignore_js_errors: true do
       click_image_options_button
 
       expect(image_options_tray).to be_displayed
+    end
+
+    it 'should close links tray if open when opening image options' do
+      skip('still flakey. Needs to be addressed in LS-1814')
+      page_title = 'Page1'
+      image = add_embedded_image('email.png')
+      @course.wiki_pages.create!(
+        title: page_title,
+        body: "<h2>This is plain text</h2><img src=\"/courses/#{@course.id}/files/#{image.id}>"
+      )
+
+      visit_existing_wiki_edit(@course, page_title)
+
+      def switch_trays
+        click_links_toolbar_menu_button
+        click_course_links
+        wait_for_ajaximations
+        expect(course_links_tray).to be_displayed
+
+        click_embedded_image_for_options
+        click_image_options_button
+
+        expect(image_options_tray).to be_displayed
+        validate_course_links_tray_closed
+
+        driver.switch_to.frame('wiki_page_body_ifr')
+        f('h2').click
+        driver.switch_to.default_content
+      end
+
+      # Duplicate trays only appear sporadically, so run this several times to make sure
+      # we aren't getting multiple trays open at once.
+      3.times { switch_trays }
     end
 
     it 'should change embedded image to link when selecting option' do
@@ -922,7 +1116,7 @@ describe 'RCE next tests', ignore_js_errors: true do
         driver.switch_to.default_content
         expect(f('.tox-pop__dialog button[title="Show link options"]')).to eq(
           driver.switch_to.active_element
-        ) # put the cursor in the table
+        )
       end
     end
 
@@ -1149,6 +1343,72 @@ describe 'RCE next tests', ignore_js_errors: true do
         change_content_tray_content_type('Links')
         wait_for_ajaximations
         expect(fj("li:contains('#{title}')")).to be_displayed
+      end
+    end
+
+    describe 'the html editors' do
+      after(:each) do
+        driver.execute_script('if (document.fullscreenElement) document.exitFullscreen()')
+      end
+
+      describe 'with the use_rce_pretty_html_editor flag off' do
+        before(:each) { Account.site_admin.disable_feature! :rce_pretty_html_editor }
+
+        it 'switches between wysiwyg and raw html view' do
+          rce_wysiwyg_state_setup(@course)
+          expect(f('[aria-label="Rich Content Editor"]')).to be_displayed
+
+          click_editor_view_button
+          expect(f('textarea#wiki_page_body')).to be_displayed
+
+          click_editor_view_button
+          expect(f('[aria-label="Rich Content Editor"]')).to be_displayed
+        end
+
+        it 'displays the editor in fullscreen' do
+          rce_wysiwyg_state_setup(@course)
+
+          click_editor_view_button
+          expect(f('textarea#wiki_page_body')).to be_displayed
+
+          click_full_screen_button
+          expect(fullscreen_element).to eq(f('textarea#wiki_page_body'))
+        end
+      end
+
+      describe 'with the use_rce_pretty_html_editor flag on' do
+        before(:each) { Account.site_admin.enable_feature! :rce_pretty_html_editor }
+
+        it 'switches between wysiwyg and raw html view' do
+          rce_wysiwyg_state_setup(@course)
+          expect(f('[aria-label="Rich Content Editor"]')).to be_displayed
+
+          # click edit button -> fancy editor
+          click_editor_view_button
+          expect(f('.RceHtmlEditor')).to be_displayed
+
+          # click edit button -> back to the rce
+          click_editor_view_button
+          expect(f('[aria-label="Rich Content Editor"]')).to be_displayed
+
+          # shift-click edit button -> raw editor
+          shift_click_button('[data-btn-id="rce-edit-btn"]')
+          expect(f('textarea#wiki_page_body')).to be_displayed
+
+          # click "Pretty HTML Editor" status bar button -> fancy editor
+          fj('button:contains("Pretty HTML Editor")').click
+          expect(f('.RceHtmlEditor')).to be_displayed
+        end
+
+        it 'displays the editor in fullscreen' do
+          rce_wysiwyg_state_setup(@course)
+
+          click_editor_view_button
+          expect(f('.RceHtmlEditor')).to be_displayed
+
+          click_full_screen_button
+          expect(fullscreen_element).to eq(f('.RceHtmlEditor'))
+        end
       end
     end
   end

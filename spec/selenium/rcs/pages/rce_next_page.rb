@@ -94,11 +94,11 @@ module RCENextPage
   end
 
   def image_link(title)
-    fj("[aria-label='Course Images'] button:contains('#{title}')")
+    fxpath("//button[.//img[contains(@title,'Click to embed #{title}')]]")
   end
 
   def image_links
-    ff("[aria-label='Course Images'] button")
+    ffxpath("//button[.//img[contains(@title,'Click to embed')]]")
   end
 
   def user_image_links
@@ -115,6 +115,10 @@ module RCENextPage
 
   def course_media_links
     ff("[data-testid='instructure_links-Link']")
+  end
+
+  def search_field
+    f('[placeholder="Search"')
   end
 
   def assignment_published_status
@@ -151,6 +155,22 @@ module RCENextPage
 
   def external_links
     f('[role^="menuitem"][title="External Links"]')
+  end
+
+  def remove_link
+    f('[role^="menuitem"][title="Remove Link"]')
+  end
+
+  def remove_links
+    f('[role^="menuitem"][title="Remove Links"]')
+  end
+
+  def course_links_tray
+    f('[role="dialog"][aria-label="Course Links"]')
+  end
+
+  def validate_course_links_tray_closed
+    expect(f('body')).not_to contain_css('[role="dialog"][aria-label="Course Links"]')
   end
 
   def link_options_button
@@ -291,8 +311,16 @@ module RCENextPage
     fj("[data-testid='instructure_links-Link'] [role='button']:contains('#{title}')")
   end
 
+  def course_item_links_list
+    ff('[data-testid="instructure_links-Link"]')
+  end
+
   def more_toolbar_button
     f('button[aria-label="More..."]')
+  end
+
+  def list_button
+    possibly_hidden_toolbar_button('[role="button"][title="Ordered and Unordered Lists"]')
   end
 
   def list_toggle_button
@@ -338,7 +366,7 @@ module RCENextPage
   end
 
   def superscript_button
-    f(superscript_button_selector)
+    possibly_hidden_toolbar_button(superscript_button_selector)
   end
 
   def subscript_menu_button_selector
@@ -351,6 +379,10 @@ module RCENextPage
 
   def subscript_button
     f(subscript_button_selector)
+  end
+
+  def align_button
+    possibly_hidden_toolbar_button('[role="button"][aria-label="Align"]')
   end
 
   def align_toggle_button
@@ -494,7 +526,11 @@ module RCENextPage
   end
 
   def math_square_root_button
-    f('.sqrt-stem')
+    f('.sqrt-prefix')
+  end
+
+  def editor_sqrt_textarea
+    f('#mathquill-container textarea')
   end
 
   def math_builder_insert_equation_button
@@ -515,6 +551,10 @@ module RCENextPage
 
   def math_rendering_exists?
     element_exists?('.equation_image')
+  end
+
+  def mathjax_element_exists_in_title?
+    element_exists?('.assignment-title .MathJax_Preview')
   end
 
   def save_button
@@ -559,12 +599,33 @@ module RCENextPage
     f('input[aria-haspopup="listbox"]', fj(':contains("Content Type")'))
   end
 
+  def editor_view_button
+    f('[data-btn-id="rce-edit-btn"]')
+  end
+
+  def fullscreen_element
+    driver.execute_script('return document.fullscreenElement')
+  end
+
   def change_content_tray_content_type(which)
     content_type = content_tray_content_type
     content_type.click
     options_id = content_type.attribute('aria-owns')
     options = f("##{options_id}")
     option = fj(":contains(#{which})", options)
+    option.click
+  end
+
+  def content_tray_content_subtype
+    fxpath('//input[ancestor::span[. = "Content Subtype"]]')
+  end
+
+  def change_content_tray_content_subtype(subtype)
+    content_subtype = content_tray_content_subtype
+    content_subtype.click
+    options_id = content_subtype.attribute('aria-owns')
+    options = f("##{options_id}")
+    option = fj(":contains(#{subtype})", options)
     option.click
   end
 
@@ -660,6 +721,14 @@ module RCENextPage
     external_links.click
   end
 
+  def click_remove_link
+    remove_link.click
+  end
+
+  def click_remove_links
+    remove_links.click
+  end
+
   def click_images_toolbar_button
     images_toolbar_button.click
   end
@@ -737,6 +806,10 @@ module RCENextPage
     more_toolbar_button.click
   end
 
+  def click_list_button
+    list_button.click
+  end
+
   def click_list_toggle_button
     list_toggle_button.click
   end
@@ -771,6 +844,10 @@ module RCENextPage
 
   def click_subscript_menu_button
     subscript_menu_button.click
+  end
+
+  def click_align_button
+    align_button.click
   end
 
   def click_align_toggle_button
@@ -862,12 +939,16 @@ module RCENextPage
     wait_for_animations
   end
 
+  def click_editor_view_button
+    editor_view_button.click
+  end
+
   def switch_to_html_view
-    fj('button:contains("Switch to raw html editor")').click
+    click_editor_view_button
   end
 
   def switch_to_editor_view
-    fj('button:contains("Switch to rich text editor")').click
+    click_editor_view_button
   end
 
   def tiny_rce_ifr_id
@@ -880,6 +961,13 @@ module RCENextPage
       tinyrce_element.click
       tinyrce_element.send_keys("#{text}\n") # newline guarantees a tinymce change event
     end
+  end
+
+  def count_elems_by_tagname(tagname)
+    # if I use ff('a').length, it takes much longer to timeout before finally
+    # throwing the Selenium::WebDriver::Error::NoSuchElementError
+    # so ignore Gergich's whining.
+    driver.execute_script("return document.querySelectorAll('#{tagname}').length")
   end
 
   def create_external_link(text, href)
@@ -945,6 +1033,10 @@ module RCENextPage
     math_square_root_button.click
   end
 
+  def add_squareroot_value
+    editor_sqrt_textarea.send_keys("81")
+  end
+
   def select_math_equation_from_toolbar
     math_builder_button.click
   end
@@ -989,6 +1081,11 @@ module RCENextPage
     in_frame rce_page_body_ifr_id do
       expect(f("#tinymce #{selectors}").attribute('style')).to be_empty
     end
+  end
+
+  def enter_search_data(search_term)
+    replace_content(search_field, search_term)
+    driver.action.send_keys(:enter).perform
   end
 
   # menubar stuff

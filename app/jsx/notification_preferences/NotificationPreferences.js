@@ -20,7 +20,6 @@ import {bool, func, string} from 'prop-types'
 import I18n from 'i18n!notification_preferences'
 import NotificationPreferencesShape from './NotificationPreferencesShape'
 import NotificationPreferencesTable from './NotificationPreferencesTable'
-import PleaseWaitWristWatch from './SVG/PleaseWaitWristWatch.svg'
 import React, {useState} from 'react'
 
 import {Alert} from '@instructure/ui-alerts'
@@ -28,7 +27,6 @@ import {Checkbox} from '@instructure/ui-checkbox'
 import {Flex} from '@instructure/ui-flex'
 import {Heading} from '@instructure/ui-heading'
 import {Text} from '@instructure/ui-text'
-import {View} from '@instructure/ui-view'
 
 const NotificationPreferences = props => {
   const [enabled, setEnabled] = useState(props.enabled)
@@ -71,40 +69,18 @@ const NotificationPreferences = props => {
     }
   }
 
-  const renderNotificationPreferences = () => {
-    if (
-      props.contextType === 'account' ||
-      ENV.NOTIFICATION_PREFERENCES_OPTIONS?.granular_course_preferences_enabled
-    ) {
-      return (
-        <Flex.Item>
-          <NotificationPreferencesTable
-            preferences={props.notificationPreferences}
-            updatePreference={props.updatePreference}
-          />
-        </Flex.Item>
-      )
-    } else {
-      return (
-        <Flex.Item>
-          <View as="div" margin="large 0 medium 0" textAlign="center">
-            <Text size="large">
-              {I18n.t(
-                'Granular course notification settings will be configurable here in the future.'
-              )}
-            </Text>
-          </View>
-          <div style={{textAlign: 'center'}}>
-            <img alt="" src={PleaseWaitWristWatch} style={{width: '200px'}} />
-          </div>
-        </Flex.Item>
-      )
-    }
-  }
+  const renderNotificationPreferences = () => (
+    <Flex.Item>
+      <NotificationPreferencesTable
+        preferences={props.notificationPreferences}
+        updatePreference={props.updatePreference}
+      />
+    </Flex.Item>
+  )
 
   const renderNotificationInfoAlert = () => (
     <Flex.Item>
-      <Alert variant="info" renderCloseButtonLabel="Close">
+      <Alert variant="info" renderCloseButtonLabel={I18n.t('Close')}>
         {props.contextType === 'course'
           ? I18n.t(
               'Course-level notifications are inherited from your account-level notification settings. Adjusting notifications for this course will override notifications at the account level.'
@@ -115,6 +91,23 @@ const NotificationPreferences = props => {
       </Alert>
     </Flex.Item>
   )
+
+  const renderAccountPrivacyInfoAlert = () =>
+    props.contextType === 'account' &&
+    ENV?.NOTIFICATION_PREFERENCES_OPTIONS?.account_privacy_notice &&
+    !ENV?.NOTIFICATION_PREFERENCES_OPTIONS?.read_privacy_info && (
+      <Flex.Item>
+        <Alert
+          variant="info"
+          renderCloseButtonLabel={I18n.t('Close')}
+          onDismiss={() => props.updatePreference({hasReadPrivacyNotice: true})}
+        >
+          {I18n.t(
+            'Notice: Some notifications may contain confidential information. Selecting to receive notifications at an email other than your institution provided address may result in sending sensitive Canvas course and group information outside of the institutional system.'
+          )}
+        </Alert>
+      </Flex.Item>
+    )
 
   const renderSendObservedNamesInNotificationsToggle = () => {
     if (
@@ -149,6 +142,7 @@ const NotificationPreferences = props => {
         </Heading>
       </Flex.Item>
       {renderNotificationInfoAlert()}
+      {renderAccountPrivacyInfoAlert()}
       {renderMuteToggle()}
       {renderSendObservedNamesInNotificationsToggle()}
       {renderNotificationPreferences()}

@@ -636,6 +636,7 @@ class ContextModule < ActiveRecord::Base
       item = opts[:attachment] || self.context.attachments.not_deleted.find_by_id(params[:id])
     elsif params[:type] == "assignment"
       item = opts[:assignment] || self.context.assignments.active.where(id: params[:id]).first
+      item = item.submittable_object if item.respond_to?(:submittable_object) && item.submittable_object
     elsif params[:type] == "discussion_topic" || params[:type] == "discussion"
       item = opts[:discussion_topic] || self.context.discussion_topics.active.where(id: params[:id]).first
     elsif params[:type] == "quiz"
@@ -683,6 +684,14 @@ class ContextModule < ActiveRecord::Base
       added_item.indent = params[:indent] || 0
       added_item.workflow_state = 'unpublished' if added_item.new_record?
       added_item.link_settings = params[:link_settings]
+      if content.is_a?(ContextExternalTool) && content.use_1_3? && content.id != 0
+        # Note: using 'new' here instead of 'ResourceLink.create_with' so if validation
+        # of the added item fails, no orphaned resource link is created
+        added_item.associated_asset = context.lti_resource_links.new(
+          custom: Lti::DeepLinkingUtil.validate_custom_params(params[:custom_params]),
+          context_external_tool: content
+        )
+      end
       added_item.save
       added_item
     elsif params[:type] == 'context_module_sub_header' || params[:type] == 'sub_header'

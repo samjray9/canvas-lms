@@ -62,6 +62,7 @@ import 'jqueryui/sortable'
 import 'compiled/jquery.rails_flash_notifications'
 import DirectShareCourseTray from 'jsx/shared/direct_share/DirectShareCourseTray'
 import DirectShareUserModal from 'jsx/shared/direct_share/DirectShareUserModal'
+import mathml from 'mathml'
 
 function scrollTo($thing, time = 500) {
   if (!$thing || $thing.length === 0) return
@@ -551,7 +552,7 @@ window.modules = (function() {
         modules.evaluateItemCyoe($item, data)
       }
       $item.addClass(data.type + '_' + data.id)
-      $item.addClass(data.type)
+      $item.addClass(data.quiz_lti ? 'lti-quiz' : data.type)
       if (data.is_duplicate_able) {
         $item.addClass('dupeable')
       }
@@ -1178,6 +1179,16 @@ modules.initModuleManagement = function() {
           />,
           module_dnd
         )
+      }
+
+      if (window.ENV?.FEATURES?.new_math_equation_handling) {
+        if (mathml.isMathMLOnPage()) {
+          if (mathml.isMathJaxLoaded()) {
+            mathml.reloadElement('content')
+          } else {
+            mathml.loadMathJax(undefined)
+          }
+        }
       }
     },
     error(data, $module) {
@@ -2121,7 +2132,7 @@ modules.initModuleManagement = function() {
       const props = {
         model: file,
         togglePublishClassOn: $el.parents('.ig-row')[0],
-        userCanManageFilesForContext: ENV.MODULE_FILE_PERMISSIONS.manage_files,
+        userCanEditFilesForContext: ENV.MODULE_FILE_PERMISSIONS.manage_files_edit,
         usageRightsRequiredForContext: ENV.MODULE_FILE_PERMISSIONS.usage_rights_required,
         fileName: file.displayName()
       }

@@ -27,6 +27,7 @@ describe "account admin question bank" do
     @question_bank = create_question_bank
     @question = create_question
     @outcome = create_outcome
+    Account.default.enable_feature!(:rce_enhancements)
     stub_rcs_config
     get "/accounts/#{Account.default.id}/question_banks/#{@question_bank.id}"
     wait_for_ajaximations

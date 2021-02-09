@@ -77,7 +77,7 @@ class ApplicationController < ActionController::Base
   after_action :set_user_id_header
   after_action :set_response_headers
   after_action :update_enrollment_last_activity_at
-  set_callback :html_render, :before, :add_csp_for_root
+  set_callback :html_render, :after, :add_csp_for_root
 
 
   add_crumb(proc {
@@ -206,6 +206,7 @@ class ApplicationController < ActionController::Base
 
         @js_env[:lolcalize] = true if ENV['LOLCALIZE']
         @js_env[:rce_auto_save_max_age_ms] = Setting.get('rce_auto_save_max_age_ms', 1.day.to_i * 1000).to_i if @js_env[:rce_auto_save]
+        @js_env[:FEATURES][:new_math_equation_handling] = use_new_math_equation_handling?
       end
     end
 
@@ -217,11 +218,13 @@ class ApplicationController < ActionController::Base
 
   # put feature checks on Account.site_admin and @domain_root_account that we're loading for every page in here
   # so altogether we can get them faster the vast majority of the time
-  JS_ENV_SITE_ADMIN_FEATURES = [:cc_in_rce_video_tray, :featured_help_links, :rce_lti_favorites, :new_math_equation_handling].freeze
+  JS_ENV_SITE_ADMIN_FEATURES = [
+    :cc_in_rce_video_tray, :featured_help_links, :rce_lti_favorites, :rce_pretty_html_editor, :rce_better_file_downloading
+  ].freeze
   JS_ENV_ROOT_ACCOUNT_FEATURES = [
     :direct_share, :assignment_bulk_edit, :responsive_awareness, :recent_history,
-    :responsive_misc, :product_tours, :module_dnd, :files_dnd, :unpublished_courses, :bulk_delete_pages,
-    :usage_rights_discussion_topics, :inline_math_everywhere
+    :responsive_misc, :product_tours, :module_dnd, :files_dnd, :unpublished_courses,
+    :usage_rights_discussion_topics, :inline_math_everywhere, :granular_permissions_manage_admin_users
   ].freeze
   JS_ENV_FEATURES_HASH = Digest::MD5.hexdigest([JS_ENV_SITE_ADMIN_FEATURES + JS_ENV_ROOT_ACCOUNT_FEATURES].sort.join(",")).freeze
   def cached_js_env_account_features
@@ -1481,8 +1484,24 @@ class ApplicationController < ActionController::Base
     end
   end
 
+  # order from general to specific; precedence
+  # evaluates the LAST one first, so having "Exception"
+  # at the end, for example, would be a problem.
+  # all things would be rescued prior to any specific handlers.
+  rescue_from Exception, with: :rescue_exception
+  # Rails exceptions
+  rescue_from ActionController::InvalidCrossOriginRequest, with: :rescue_expected_error_type
+  rescue_from ActionController::ParameterMissing, with: :rescue_expected_error_type
+  rescue_from ActionController::UnknownFormat, with: :rescue_expected_error_type
+  rescue_from ActiveRecord::RecordInvalid, with: :rescue_expected_error_type
+  rescue_from ActionView::MissingTemplate, with: :rescue_expected_error_type
+  # Canvas exceptions
   rescue_from RequestError, with: :rescue_expected_error_type
-  rescue_from Exception, :with => :rescue_exception
+  rescue_from Canvas::Security::TokenExpired, with: :rescue_expected_error_type
+  rescue_from SearchTermHelper::SearchTermTooShortError, with: :rescue_expected_error_type
+  rescue_from CanvasHttp::CircuitBreakerError, with: :rescue_expected_error_type
+  rescue_from InstFS::ServiceError, with: :rescue_expected_error_type
+  rescue_from InstFS::BadRequestError, with: :rescue_expected_error_type
 
   def rescue_expected_error_type(error)
     rescue_exception(error, level: :info)
@@ -1495,7 +1514,7 @@ class ApplicationController < ActionController::Base
     set_response_headers
 
     if config.consider_all_requests_local
-      rescue_action_locally(exception)
+      rescue_action_locally(exception, level: level)
     else
       rescue_action_in_public(exception, level: level)
     end
@@ -1645,15 +1664,15 @@ class ApplicationController < ActionController::Base
     data
   end
 
-  def rescue_action_locally(exception)
+  def rescue_action_locally(exception, level: :error)
     if api_request? or exception.is_a? RequestError
       # we want api requests to behave the same on error locally as in prod, to
       # ease testing and development. you can still view the backtrace, etc, in
       # the logs.
-      rescue_action_in_public(exception)
+      rescue_action_in_public(exception, level: level)
     else
       # this ensures the logging will still happen so you can see backtrace, etc.
-      Canvas::Errors.capture(exception)
+      Canvas::Errors.capture(exception, {}, level)
       super
     end
   end
@@ -1712,7 +1731,9 @@ class ApplicationController < ActionController::Base
   def content_tag_redirect(context, tag, error_redirect_symbol, tag_type=nil)
     url_params = tag.tag_type == 'context_module' ? { :module_item_id => tag.id } : {}
     if tag.content_type == 'Assignment'
-      redirect_to named_context_url(context, :context_assignment_url, tag.content_id, url_params)
+      use_edit_url = Account.site_admin.feature_enabled?(:new_quizzes_modules_support) && @context.grants_right?(@current_user, :manage) && tag.quiz_lti
+      redirect_symbol = use_edit_url ? :edit_context_assignment_url : :context_assignment_url
+      redirect_to named_context_url(context, redirect_symbol, tag.content_id, url_params)
     elsif tag.content_type == 'WikiPage'
       redirect_to polymorphic_url([context, tag.content], url_params)
     elsif tag.content_type == 'Attachment'
@@ -1819,7 +1840,9 @@ class ApplicationController < ActionController::Base
             context: @context,
             return_url: @return_url,
             expander: variable_expander,
-            opts: opts
+            opts: opts.merge(
+              resource_link_for_custom_params: @tag.associated_asset_lti_resource_link
+            )
           )
         else
           Lti::LtiOutboundAdapter.new(@tool, @current_user, @context).prepare_tool_launch(@return_url, variable_expander, opts)
@@ -2130,7 +2153,7 @@ class ApplicationController < ActionController::Base
     return nil unless str
     return str.html_safe unless str.match(/object|embed|equation_image/)
 
-    UserContent.escape(str, request.host_with_port)
+    UserContent.escape(str, request.host_with_port, use_new_math_equation_handling?)
   end
   helper_method :user_content
 
@@ -2148,7 +2171,7 @@ class ApplicationController < ActionController::Base
         is_public: is_public
       ).processed_url
     end
-    UserContent.escape(rewriter.translate_content(str), request.host_with_port)
+    UserContent.escape(rewriter.translate_content(str), request.host_with_port, use_new_math_equation_handling?)
   end
   helper_method :public_user_content
 
@@ -2189,6 +2212,15 @@ class ApplicationController < ActionController::Base
       return false
     end
     true
+  end
+
+  # the way classic quizzes copies question data from the page into the
+  # edit form causes the elements added for a11y to get duplicated
+  # and other misadventures that caused 4 hotfixes in 3 days.
+  # Let's just not use the new math handling there.
+  def use_new_math_equation_handling?
+    Account.site_admin.feature_enabled?(:new_math_equation_handling) &&
+    !(params[:controller] == "quizzes/quizzes" && params[:action] == "edit")
   end
 
   def destroy_session

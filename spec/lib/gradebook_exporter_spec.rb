@@ -68,6 +68,14 @@ describe GradebookExporter do
 
         expect(assignment_headers).to eq(expected_headers)
       end
+
+      it "includes a column for anonymized assignments" do
+        @assignments[0].update!(anonymous_grading: true)
+        csv = GradebookExporter.new(@course, @teacher).to_csv
+        headers = CSV.parse(csv, headers: true).headers
+
+        expect(headers).to include(/First group assignment/)
+      end
     end
 
     describe "custom columns" do
@@ -269,6 +277,12 @@ describe GradebookExporter do
 
         it "designates manually-posted assignments as 'Manual Posting'" do
           expect(manual_posting_row[manual_header]).to eq "Manual Posting"
+        end
+
+        it "has a special designation for anonymous unposted assignments" do
+          course_with_student(course: @course, active_all: true)
+          manual_assignment.update!(anonymous_grading: true)
+          expect(manual_posting_row[manual_header]).to eq "Manual Posting (scores hidden from instructors)"
         end
 
         it "emits an empty value for auto-posted assignments" do
@@ -647,20 +661,50 @@ describe GradebookExporter do
     end
   end
 
+  context "when a course has anonymous assignments" do
+    before(:each) do
+      @student = User.create!
+      student_in_course(user: @student, course: @course, active_all: true)
+      @assignment = @course.assignments.create!(title: "Anon Assignment", points_possible: 10, anonymous_grading: true)
+      @assignment.ensure_post_policy(post_manually: true)
+      @assignment.grade_student(@student, grade: 8, grader: @teacher)
+    end
+
+    let(:submission_score) do
+      csv = GradebookExporter.new(@course, @teacher, {}).to_csv
+      rows = CSV.parse(csv, headers: true)
+      rows[2]["Anon Assignment (#{@assignment.id})"]
+    end
+
+    it "shows 'N/A' for submission scores in the export when the assignment is unposted" do
+      expect(submission_score).to eq "N/A"
+    end
+
+    it "shows actual submission scores in the export when the assignment is posted" do
+      @assignment.post_submissions
+      expect(submission_score).to eq "8.00"
+    end
+  end
+
   context "when a course has unposted assignments" do
     let(:posted_assignment) { @course.assignments.create!(title: "Posted", points_possible: 10) }
     let(:unposted_assignment) { @course.assignments.create!(title: "Unposted", points_possible: 10) }
+    let(:unposted_anonymous_assignment) do
+      @course.assignments.create!(title: "Unposted Anon", points_possible: 10, anonymous_grading: true)
+    end
 
     before(:each) do
       @course.assignments.create!(title: "Ungraded", points_possible: 10)
 
       posted_assignment.ensure_post_policy(post_manually: true)
       unposted_assignment.ensure_post_policy(post_manually: true)
+      unposted_anonymous_assignment.ensure_post_policy(post_manually: true)
 
       student_in_course active_all: true
 
       posted_assignment.grade_student @student, grade: 9, grader: @teacher
       unposted_assignment.grade_student @student, grade: 3, grader: @teacher
+      unposted_anonymous_assignment.grade_student @student, grade: 1, grader: @teacher
 
       posted_assignment.post_submissions
     end

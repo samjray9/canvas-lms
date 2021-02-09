@@ -19,6 +19,20 @@ class QuotedValue < String
 end
 
 module PostgreSQLAdapterExtensions
+  def receive_timeout_wrapper
+    return yield unless @config[:receive_timeout]
+    Timeout.timeout(@config[:receive_timeout], PG::ConnectionBad, "receive timeout") { yield }
+  end
+
+  %I{begin_db_transaction create_savepoint active?}.each do |method|
+    class_eval <<-RUBY, __FILE__, __LINE__ + 1
+      def #{method}(*)
+        receive_timeout_wrapper { super }
+      end
+    RUBY
+  end
+
+
   def explain(arel, binds = [], analyze: false)
     sql = "EXPLAIN #{"ANALYZE " if analyze}#{to_sql(arel, binds)}"
     ActiveRecord::ConnectionAdapters::PostgreSQL::ExplainPrettyPrinter.new.pp(exec_query(sql, "EXPLAIN", binds))
@@ -42,7 +56,11 @@ module PostgreSQLAdapterExtensions
     begin
       result.check
     rescue => e
-      raise translate_exception(e, "COPY FROM STDIN")
+      if CANVAS_RAILS5_2
+        raise translate_exception(e, "COPY FROM STDIN")
+      else
+        raise translate_exception(e, message: e.message, sql: "COPY FROM STDIN", binds: [])
+      end
     end
     result.cmd_tuples
   end
@@ -455,6 +473,19 @@ module PostgreSQLAdapterExtensions
   ensure
     @collations = nil
     I18n.locale = original_locale
+  end
+
+  def current_wal_lsn
+    unless instance_variable_defined?(:@has_wal_func)
+      @has_wal_func = select_value("SELECT true FROM pg_proc WHERE proname IN ('pg_current_wal_lsn','pg_current_xlog_location') LIMIT 1")
+    end
+    return unless @has_wal_func
+
+    if postgresql_version >= 100000
+      select_value("SELECT pg_current_wal_lsn()")
+    else
+      select_value("SELECT pg_current_xlog_location()")
+    end
   end
 end
 

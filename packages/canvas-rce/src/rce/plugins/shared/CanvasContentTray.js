@@ -18,17 +18,18 @@
 
 import React, {Suspense, useCallback, useEffect, useRef, useState} from 'react'
 import {bool, func, instanceOf, shape, string} from 'prop-types'
-import {Tray} from '@instructure/ui-overlays'
+import {Tray} from '@instructure/ui-tray'
 import {CloseButton} from '@instructure/ui-buttons'
-import {Heading} from '@instructure/ui-elements'
+import {Heading} from '@instructure/ui-heading'
 import {Spinner} from '@instructure/ui-spinner'
-import {Flex} from '@instructure/ui-layout'
+import {Flex} from '@instructure/ui-flex'
 
 import ErrorBoundary from './ErrorBoundary'
 import Bridge from '../../../bridge/Bridge'
 import formatMessage from '../../../format-message'
 import Filter, {useFilterSettings} from './Filter'
 import {StoreProvider} from './StoreContext'
+import {getTrayHeight} from './trayUtils'
 
 /**
  * Returns the translated tray label
@@ -223,14 +224,20 @@ export default function CanvasContentTray(props) {
   const [hidingTrayOnAction, setHidingTrayOnAction] = useState(true)
 
   const trayRef = useRef(null)
+  const scrollingAreaRef = useRef(null)
   const [filterSettings, setFilterSettings] = useFilterSettings()
 
   const {bridge, editor, onTrayClosing} = {...props}
 
   const handleDismissTray = useCallback(() => {
+    // return focus to the RCE if focus was on this tray
+    if (trayRef.current && trayRef.current.contains(document.activeElement)) {
+      bridge.focusActiveEditor(false)
+    }
+
     onTrayClosing && onTrayClosing(CanvasContentTray.globalOpenCount) // tell RCEWrapper we're closing if we're open
     setIsOpen(false)
-  }, [onTrayClosing])
+  }, [bridge, onTrayClosing])
 
   useEffect(() => {
     const controller = {
@@ -258,14 +265,26 @@ export default function CanvasContentTray(props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editor.id, bridge, handleDismissTray, hidingTrayOnAction])
 
+  useEffect(() => {
+    if (
+      hasOpened &&
+      scrollingAreaRef.current &&
+      !scrollingAreaRef.current.style.overscrollBehaviorY
+    ) {
+      scrollingAreaRef.current.style.overscrollBehaviorY = 'contain'
+    }
+  }, [hasOpened])
+
+  function handleOpenTray() {
+    bridge.focusEditor(editor)
+    setHasOpened(true)
+  }
+
   function handleExitTray() {
     onTrayClosing && onTrayClosing(true) // tell RCEWrapper we're closing
   }
 
   function handleCloseTray() {
-    // return focus to the RCE
-    bridge.focusActiveEditor(false)
-
     setHasOpened(false)
     onTrayClosing && onTrayClosing(false) // tell RCEWrapper we're closed
   }
@@ -285,7 +304,6 @@ export default function CanvasContentTray(props) {
     }
 
     setFilterSettings(newFilterSettings)
-
     if (newFilterSettings.contentType) {
       let contextType, contextId
       switch (newFilterSettings.contentType) {
@@ -332,16 +350,22 @@ export default function CanvasContentTray(props) {
           onDismiss={handleDismissTray}
           onClose={handleCloseTray}
           onExit={handleExitTray}
-          onOpen={() => {
-            bridge.focusEditor(editor)
-            setHasOpened(true)
-          }}
+          onOpen={handleOpenTray}
           onEntered={() => {
             const c = document.querySelector('[role="main"]')
-            const target_w = c ? c.offsetWidth - trayRef.current?.offsetWidth : 0
-            if (target_w >= 320) {
-              c.style.boxSizing = 'border-box'
-              c.style.width = `${target_w}px`
+            let target_w = 0
+            if (c) {
+              const margin =
+                window.getComputedStyle(c).direction === 'ltr'
+                  ? document.body.getBoundingClientRect().right - c.getBoundingClientRect().right
+                  : c.getBoundingClientRect().left
+
+              target_w = c.offsetWidth - trayRef.current?.offsetWidth + margin
+
+              if (target_w >= 320 && target_w < c.offsetWidth) {
+                c.style.boxSizing = 'border-box'
+                c.style.width = `${target_w}px`
+              }
             }
             setHidingTrayOnAction(target_w < 320)
           }}
@@ -354,8 +378,8 @@ export default function CanvasContentTray(props) {
           {isOpen && hasOpened ? (
             <Flex
               direction="column"
-              display="block"
-              height="100vh"
+              as="div"
+              height={getTrayHeight()}
               overflowY="hidden"
               tabIndex="-1"
               data-canvascontenttray-content
@@ -393,7 +417,12 @@ export default function CanvasContentTray(props) {
                 />
               </Flex.Item>
 
-              <Flex.Item grow shrink margin="xx-small xxx-small 0">
+              <Flex.Item
+                grow
+                shrink
+                margin="xx-small xxx-small 0"
+                elementRef={el => (scrollingAreaRef.current = el)}
+              >
                 <ErrorBoundary>
                   <DynamicPanel
                     contentType={filterSettings.contentType}

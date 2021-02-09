@@ -313,6 +313,23 @@ describe Attachment do
         expect(canvadocable.canvadoc).not_to be_nil
         expect(canvadocable.crocodoc_document).to be_nil
       end
+
+      it "downgrades Canvadoc upload timeouts to WARN" do
+        canvadocable = canvadocable_attachment_model content_type: "application/pdf"
+        cd_double = double()
+        allow(canvadocable).to receive(:canvadoc).and_return(cd_double)
+        expect(canvadocable.canvadoc).not_to be_nil
+        expect(canvadocable.canvadoc).to receive(:upload).and_raise(Canvadoc::UploadTimeout, "test timeout")
+        captured = false
+        allow(Canvas::Errors).to receive(:capture) do |e, error_data, error_level|
+          if e.is_a?(Canvadoc::UploadTimeout)
+            captured = true
+            expect(error_level).to eq(:warn)
+          end
+        end
+        canvadocable.submit_to_canvadocs 1
+        expect(captured).to be_truthy
+      end
     end
   end
 
@@ -1172,6 +1189,25 @@ describe Attachment do
           expect(@a1.file_state).to eq 'deleted'
           expect(@a1.replacement_attachment).to eql @a
           expect(deleted).to eq [ @a1 ]
+        end
+      end
+
+      it "can still rename when folder lives on a different shard" do
+        @shard1.activate do
+          shard_attachment_1 = attachment_with_context(@course, display_name: "old_name_1")
+          shard_attachment_2 = attachment_with_context(@course, display_name: "old_name_2")
+          folder = shard_attachment_1.folder
+          expect(folder.shard.id).to_not eq(shard_attachment_1.shard.id)
+          shard_attachment_1.display_name = "old_name_2"
+          deleted = shard_attachment_1.handle_duplicates(:rename)
+          expect(deleted).to be_empty
+          shard_attachment_1.reload
+          shard_attachment_2.reload
+          expect(shard_attachment_1.file_state).to eq 'available'
+          expect(shard_attachment_2.file_state).to eq 'available'
+          expect(shard_attachment_2.display_name).to_not eq(shard_attachment_1.display_name)
+          expect(shard_attachment_2.display_name).to eq 'old_name_2'
+          expect(shard_attachment_1.display_name).to eq 'old_name_2-2'
         end
       end
     end
