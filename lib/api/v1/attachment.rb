@@ -153,7 +153,14 @@ module Api::V1::Attachment
       hash['canvadoc_document_id'] = attachment&.canvadoc&.document_id
     end
     if includes.include? 'enhanced_preview_url'
-      hash['preview_url'] = context_url(attachment.context, :context_file_file_preview_url, attachment, annotate: 0)
+      url_opts = {
+        annotate: 0
+      }
+      omit_verifier = options[:omit_verifier_in_app] && (respond_to?(:in_app?, true) && in_app? || @authenticated_with_jwt)
+      if downloadable && !omit_verifier
+        url_opts[:verifier] = attachment.uuid
+      end
+      hash['preview_url'] = context_url(attachment.context, :context_file_file_preview_url, attachment, url_opts)
     end
     if includes.include? 'usage_rights'
       hash['usage_rights'] = usage_rights_json(attachment.usage_rights, user)
@@ -174,13 +181,22 @@ module Api::V1::Attachment
     hash
   end
 
+  # First, try to find the extension using the name, filename and url parameters,
+  # otherwise, try to find using the content_type parameter.
+  # The order matters because there's more than one mime type to the same
+  # extension, like text/plain: dat,txt,hh,hlp.
+  # The `File.mime_types[mime_type]` returns the last extesion recorded in the
+  # mime_types.yml.
   def infer_file_extension(params)
+    filenames_with_extension = filenames(params).select{ |item| item.include?('.') }
+
+    extension = filenames_with_extension&.first&.split('.')&.last&.downcase
+
+    return extension if extension
+
     mime_type = infer_upload_content_type(params)
 
-    return File.mime_types[mime_type] if mime_type
-
-    filenames_with_extension = filenames(params).select{ |item| item.include?('.') }
-    filenames_with_extension&.first&.split('.')&.last&.downcase
+    File.mime_types[mime_type] if mime_type
   end
 
   def infer_filename_from_url(url)

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2014 - present Instructure, Inc.
 #
@@ -26,7 +28,7 @@ group :test do
   gem 'simplecov', '0.15.1', require: false
     gem 'docile', '1.1.5', require: false
   gem 'simplecov-rcov', '0.2.3', require: false
-  gem 'puma', '5.0.0', require: false
+  gem 'puma', '5.2.2', require: false
 
   gem 'db-query-matchers', '0.10.0'
   gem 'rspec', '3.9.0'
@@ -71,4 +73,6 @@ group :test do
   gem 'flakey_spec_catcher', require: false
   gem 'factory_bot', '6.1.0', require: false
   gem 'rspec_junit_formatter', require: false
+  gem 'axe-core-selenium', '4.1.0', require: false
+  gem 'axe-core-rspec', '4.1.0', require: false
 end

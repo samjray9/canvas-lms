@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -303,7 +305,7 @@ class ConversationsController < ApplicationController
       js_env(CONVERSATIONS: hash)
       if @domain_root_account.feature_enabled?(:react_inbox)
         css_bundle :canvas_inbox
-        js_bundle :canvas_inbox
+        js_bundle :inbox
         render html: '', layout: true
         return
       end

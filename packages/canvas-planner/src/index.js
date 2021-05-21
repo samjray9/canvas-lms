@@ -23,7 +23,16 @@ import moment from 'moment-timezone'
 import {Spinner} from '@instructure/ui-spinner'
 import i18n from './i18n'
 import configureStore from './store/configureStore'
-import {initialOptions, getPlannerItems, scrollIntoPast, loadFutureItems} from './actions'
+import {
+  initialOptions,
+  getPlannerItems,
+  getWeeklyPlannerItems,
+  scrollIntoPast,
+  loadFutureItems,
+  loadThisWeekItems,
+  startLoadingAllOpportunities,
+  toggleMissingItems
+} from './actions'
 import {registerScrollEvents} from './utilities/scrollUtils'
 import {initialize as initializeAlerts} from './utilities/alertUtils'
 import {initializeContent} from './utilities/contentUtils'
@@ -31,11 +40,25 @@ import {initializeDateTimeFormatters} from './utilities/dateUtils'
 import {DynamicUiManager, DynamicUiProvider, specialFallbackFocusId} from './dynamic-ui'
 import responsiviser from './components/responsiviser'
 
+const TeacherPreview = React.lazy(() => import('./components/TeacherPreview'))
 const ToDoSidebar = React.lazy(() => import('./components/ToDoSidebar'))
 const PlannerApp = React.lazy(() => import('./components/PlannerApp'))
 const PlannerHeader = React.lazy(() => import('./components/PlannerHeader'))
+const WeeklyPlannerHeader = React.lazy(() => import('./components/WeeklyPlannerHeader'))
+
+export * from './components'
+
+export {loadThisWeekItems, startLoadingAllOpportunities, toggleMissingItems}
 
 export {responsiviser}
+
+export function createTeacherPreview(timeZone) {
+  return (
+    <Suspense fallback={loading()}>
+      <TeacherPreview timeZone={timeZone} />
+    </Suspense>
+  )
+}
 
 let externalPlannerActive
 const plannerActive = () => (externalPlannerActive ? externalPlannerActive() : false)
@@ -85,6 +108,7 @@ const defaultEnv = {}
 
 const plannerHeaderId = 'dashboard_header_container'
 const plannerNewActivityButtonId = 'new_activity_button'
+const weeklyPlannerHeaderId = 'weekly_planner_header'
 
 function mergeDefaultOptions(options) {
   const newOpts = {...defaultOptions, ...options}
@@ -97,11 +121,19 @@ function mergeDefaultOptions(options) {
   return newOpts
 }
 
+function getCourseColor({assetString, color}, {K5_MODE, PREFERENCES: {custom_colors = {}}}) {
+  if (K5_MODE) {
+    return color || '#394B58'
+  } else {
+    return custom_colors[assetString]
+  }
+}
+
 function initializeCourseAndGroupColors(options) {
   if (!options.env.PREFERENCES) return
   options.env.STUDENT_PLANNER_COURSES = options.env.STUDENT_PLANNER_COURSES.map(dc => ({
     ...dc,
-    color: options.env.PREFERENCES.custom_colors[dc.assetString]
+    color: getCourseColor(dc, options.env)
   }))
   options.env.STUDENT_PLANNER_GROUPS = options.env.STUDENT_PLANNER_GROUPS.map(dg => ({
     ...dg,
@@ -174,7 +206,11 @@ export function initializePlanner(options) {
     initializeDateTimeFormatters(options.dateTimeFormatters)
 
     options.plannerNewActivityButtonId = plannerNewActivityButtonId
-    dynamicUiManager.setOffsetElementIds(plannerHeaderId, plannerNewActivityButtonId)
+    if (options.env.K5_MODE) {
+      dynamicUiManager.setOffsetElementIds(weeklyPlannerHeaderId, null)
+    } else {
+      dynamicUiManager.setOffsetElementIds(plannerHeaderId, plannerNewActivityButtonId)
+    }
 
     if (options.externalFallbackFocusable) {
       dynamicUiManager.registerAnimatable(
@@ -202,13 +238,18 @@ function loading() {
 }
 
 export function createPlannerApp() {
-  registerScrollEvents({
-    scrollIntoPast: handleScrollIntoPastAttempt,
-    scrollIntoFuture: handleScrollIntoFutureAttempt,
-    scrollPositionChange: pos => dynamicUiManager.handleScrollPositionChange(pos)
-  })
+  if (!store.getState().weeklyDashboard) {
+    // disable load on scroll for weekly dashboard
+    registerScrollEvents({
+      scrollIntoPast: handleScrollIntoPastAttempt,
+      scrollIntoFuture: handleScrollIntoFutureAttempt,
+      scrollPositionChange: pos => dynamicUiManager.handleScrollPositionChange(pos)
+    })
 
-  store.dispatch(getPlannerItems(moment.tz(initializedOptions.env.timeZone).startOf('day')))
+    store.dispatch(getPlannerItems(moment.tz(initializedOptions.env.timeZone).startOf('day')))
+  } else {
+    store.dispatch(getWeeklyPlannerItems(moment.tz(initializedOptions.env.timeZone).startOf('day')))
+  }
 
   return (
     <DynamicUiProvider manager={dynamicUiManager}>
@@ -220,6 +261,8 @@ export function createPlannerApp() {
             plannerActive={plannerActive}
             currentUser={store.getState().currentUser}
             focusFallback={() => dynamicUiManager.focusFallback('item')}
+            k5Mode={initializedOptions.env.K5_MODE}
+            isWeekly={initializedOptions.env.K5_MODE}
           />
         </Suspense>
       </Provider>
@@ -275,6 +318,18 @@ export function renderToDoSidebar(element) {
       </Suspense>
     </Provider>,
     element
+  )
+}
+
+export function renderWeeklyPlannerHeader(props) {
+  return (
+    <DynamicUiProvider manager={dynamicUiManager}>
+      <Provider store={store}>
+        <Suspense fallback={loading()}>
+          <WeeklyPlannerHeader {...props} />
+        </Suspense>
+      </Provider>
+    </DynamicUiProvider>
   )
 }
 

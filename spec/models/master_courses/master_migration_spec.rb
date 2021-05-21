@@ -455,6 +455,69 @@ describe MasterCourses::MasterMigration do
       expect(quiz_to.reload.quiz_groups.to_a).to eq [qgroup2_to]
     end
 
+    it 'should sync deleted quiz groups linked to question banks after the quiz has been published and submitted' do
+      @copy_to = course_factory
+      sub = @template.add_child_course!(@copy_to)
+      student = user_factory(active_all: true)
+      @copy_to.enroll_student(student, enrollment_state: 'active')
+
+      quiz = @copy_from.quizzes.create!
+      bank = @copy_from.assessment_question_banks.create!(:title=>'Test Bank')
+      bank.assessment_questions.create!(question_data: {'name' => 'test question', 'answers' => [{'id' => 1}, {'id' => 2}]})
+      bank.assessment_questions.create!(question_data: {'name' => 'test question 2', 'answers' => [{'id' => 3}, {'id' => 4}]})
+      qgroup1 = quiz.quiz_groups.create!(name: "group", pick_count: 1)
+      qgroup1.assessment_question_bank = bank
+      qgroup1.save
+      @template.content_tag_for(quiz).update_attribute(:restrictions, {content: true})
+      run_master_migration
+
+      quiz_to = @copy_to.quizzes.where(migration_id: mig_id(quiz)).first
+      qgroup1_to = quiz_to.quiz_groups.where(migration_id: mig_id(qgroup1.asset_string)).first
+
+      Timecop.freeze(4.minutes.from_now) do
+        quiz_to.publish!
+        quiz_to.generate_submission(student)
+      end
+
+      Timecop.freeze(2.minutes.from_now) do
+        qgroup1.destroy
+      end
+      run_master_migration
+
+      expect(quiz_to.reload.quiz_groups.to_a).to eq []
+    end
+
+    it 'should sync deleted quiz groups with quiz questions after the quiz has been published and submitted' do
+      @copy_to = course_factory
+      sub = @template.add_child_course!(@copy_to)
+      student = user_factory(active_all: true)
+      @copy_to.enroll_student(student, enrollment_state: 'active')
+
+      quiz = @copy_from.quizzes.create!
+      qgroup1 = quiz.quiz_groups.create!(name: "group", pick_count: 1)
+      qq1 = qgroup1.quiz_questions.create!(quiz: quiz, question_data: {'question_name' => 'test group question', 'question_type' => 'essay_question'})
+      qgroup1.save
+      Timecop.freeze(2.minutes.from_now) do
+        @template.content_tag_for(quiz).update_attribute(:restrictions, {:content => true})
+      end
+      run_master_migration
+
+      quiz_to = @copy_to.quizzes.where(migration_id: mig_id(quiz)).first
+      qgroup1_to = quiz_to.quiz_groups.where(migration_id: mig_id(qgroup1.asset_string)).first
+
+      Timecop.freeze(4.minutes.from_now) do
+        quiz_to.publish!
+        quiz_to.generate_submission(student)
+      end
+
+      Timecop.freeze(2.minutes.from_now) do
+        qgroup1.destroy
+      end
+      run_master_migration
+
+      expect(quiz_to.reload.quiz_groups.to_a).to eq []
+    end
+
     it "should sync deleted assessment bank questions (unless changed downstream)" do
       @copy_to = course_factory
       sub = @template.add_child_course!(@copy_to)
@@ -1792,6 +1855,61 @@ describe MasterCourses::MasterMigration do
       copied_att = @copy_to.attachments.where(:migration_id => att_tag.migration_id).first
       expect(copied_att.full_path).to eq "course files/parent RENAMED/child/file.txt"
       expect(@copy_to.folders.where(:name => "parent RENAMED").first.locked).to eq true
+    end
+
+    it "deals with a deleted folder being changed upstream" do
+      blueprint_folder = nil
+      att_tag = nil
+      @copy_to = course_factory
+      @sub = @template.add_child_course!(@copy_to)
+
+      Timecop.travel(10.minutes.ago) do
+        blueprint_folder = Folder.root_folders(@copy_from).first.sub_folders.create!(:name => "folder", :context => @copy_from)
+        att = Attachment.create!(:filename => 'file.txt', :uploaded_data => StringIO.new('1'), :folder => blueprint_folder, :context => @copy_from)
+        att_tag = @template.create_content_tag_for!(att)
+        run_master_migration
+      end
+
+      att2_tag = nil
+      Timecop.travel(5.minutes.ago) do
+        associated_folder = @copy_to.folders.where(cloned_item_id: blueprint_folder.cloned_item_id).take
+        associated_folder.destroy
+
+        blueprint_folder.update(:name => "folder RENAMED", :locked => true)
+        att2 = Attachment.create!(:filename => 'file2.txt', :uploaded_data => StringIO.new('2'), :folder => blueprint_folder, :context => @copy_from)
+        att2_tag = @template.create_content_tag_for!(att2)
+      end
+
+      m = run_master_migration
+      expect(m).to be_completed
+
+      copied_att = @copy_to.attachments.where(:migration_id => att2_tag.migration_id).first
+      expect(copied_att.full_path).to eq "course files/folder RENAMED/file2.txt"
+    end
+
+    it "syncs moved folders" do
+      folder_A = Folder.root_folders(@copy_from).first.sub_folders.create!(name: 'A', context: @copy_from)
+      folder_B = Folder.root_folders(@copy_from).first.sub_folders.create!(name: 'B', context: @copy_from)
+      # this needs to be here because empty folders don't sync
+      Attachment.create!(filename: 'decoy.txt', uploaded_data: StringIO.new('1'), folder: folder_B, context: @copy_from)
+      folder_C = folder_A.sub_folders.create!(name: 'C', context: @copy_from)
+      att = Attachment.create!(filename: 'file.txt', uploaded_data: StringIO.new('1'), folder: folder_C, context: @copy_from)
+      att_tag = @template.create_content_tag_for!(att)
+
+      @copy_to = course_factory
+      @sub = @template.add_child_course!(@copy_to)
+      run_master_migration
+
+      copied_att = @copy_to.attachments.where(:migration_id => att_tag.migration_id).first
+      expect(copied_att.full_path).to eq "course files/A/C/file.txt"
+
+      Timecop.travel(10.minutes.from_now) do
+        folder_C.parent_folder = folder_B
+        folder_C.save!
+        run_master_migration
+      end
+
+      expect(copied_att.reload.full_path).to eq "course files/B/C/file.txt"
     end
 
     it "should baleet assignment overrides when an admin pulls a bait-n-switch with date restrictions" do

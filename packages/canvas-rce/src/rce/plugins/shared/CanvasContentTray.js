@@ -405,6 +405,7 @@ export default function CanvasContentTray(props) {
                 <Filter
                   {...filterSettings}
                   userContextType={props.contextType}
+                  containingContextType={props.containingContext.contextType}
                   onChange={newFilter => {
                     handleFilterChange(
                       newFilter,
@@ -455,6 +456,11 @@ const trayPropsMap = {
   canUploadFiles: bool.isRequired,
   contextId: string.isRequired, // initial value indicating the user's context (e.g. student v teacher), not the tray's
   contextType: string.isRequired, // initial value indicating the user's context, not the tray's
+  containingContext: shape({
+    contextType: string.isRequired,
+    contextId: string.isRequired,
+    userId: string.isRequired
+  }),
   filesTabDisabled: bool,
   host: requiredWithoutSource,
   jwt: requiredWithoutSource,
@@ -465,7 +471,7 @@ const trayPropsMap = {
   themeUrl: string
 }
 
-export const trayProps = shape(trayPropsMap)
+export const trayPropTypes = shape(trayPropsMap)
 
 CanvasContentTray.propTypes = {
   bridge: instanceOf(Bridge).isRequired,

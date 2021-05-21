@@ -28,7 +28,7 @@ describe AcademicBenchmark::Converter do
         "statement"=>
          {"descr"=>
            "Identify major events of the American Revolution, including the battles of Lexington and Concord, Bunker Hill, Saratoga, and Yorktown."},
-        "number"=>{"raw"=>"8.", "enhanced"=>"8"},
+        "number"=>{"prefix_enhanced"=>"SOC.5.8"},
         "label"=>"Content Standard",
         "section"=>
          {"guid"=>"b6a72362-7ca2-4f00-85ef-6ff44917460b",
@@ -66,7 +66,7 @@ describe AcademicBenchmark::Converter do
                "guid"=>"912A8036-F1B9-11E5-862E-0938DC287387",
                "descr"=>"Alabama State Department of Education"}]},
           "guid"=>"fe79c173-62e4-490b-ad02-a9ee8db932ad"},
-        "number"=>{"raw"=>nil, "enhanced"=>"8.5"},
+        "number"=>{"prefix_enhanced"=>"SOC.5.8.5"},
         "guid"=>"0003631b-ca53-4985-8963-b7907320f8d9",
         "level"=>2,
         "status"=>"active",
@@ -200,11 +200,11 @@ describe AcademicBenchmark::Converter do
         expect(group11["outcomes"].count).to eq 1
         group111 = group11["outcomes"].first
         expect(group111['type']).to eql "learning_outcome_group"
-        expect(group111['title']).to eql "8 - Identify major events of the American Revolution, "
+        expect(group111['title']).to eql "SOC.5.8 - Identify major events of the American Revolution, "
         expect(group111["outcomes"].count).to eq 1
         outcome = group111["outcomes"].first
         expect(outcome['type']).to eql "learning_outcome"
-        expect(outcome['title']).to eql "8.5"
+        expect(outcome['title']).to eql "SOC.5.8.5"
         expect(outcome['mastery_points']).to eql 6
         expect(outcome['points_possible']).to eql 10
         expect(outcome['ratings'].length).to eql 2
@@ -231,6 +231,25 @@ describe AcademicBenchmark::Converter do
           publication = authority["outcomes"][0]
           expect(publication["outcomes"].count).to eq 1
           expect(publication["outcomes"][0]['title']).to eq 'Social Studies'
+        end
+      end
+
+      context 'clarification standards' do
+        let(:standard_instance2) do
+          dup_hash = raw_standard2.dup
+          dup_hash['attributes']['utilizations'] = [{"type"=>"clarification"}]
+          AcademicBenchmarks::Standards::Standard.new(dup_hash)
+        end
+
+        it 'appends the description to the parent standard and treats the parent as an outcome' do
+          expect(course = converter.export).to be_truthy
+          authority = course["learning_outcomes"].first
+          publication = authority["outcomes"].first
+          group1 = publication["outcomes"].first
+          group11 = group1["outcomes"].first
+          group111 = group11["outcomes"].first
+          expect(group111["type"]).to eq "learning_outcome"
+          expect(group111["description"]).to match(/and Yorktown. Locating/)
         end
       end
     end

@@ -113,7 +113,6 @@ describe 'Global Navigation' do
     describe 'Recent History' do
       before do
         Setting.set('enable_page_views', 'db')
-        Account.default.enable_feature!(:recent_history)
         @assignment = @course.assignments.create(:name => "another assessment")
         @quiz = Quizzes::Quiz.create!(:title => 'quiz1', :context => @course)
         page_view_for url: app_url + "/courses/#{@course.id}/assignments/#{@assignment.id}", context: @course,
@@ -124,14 +123,14 @@ describe 'Global Navigation' do
                       asset_code: @quiz.asset_string
       end
 
-      it 'should show the Recent History tray upon clicking', ignore_js_errors: true do
+      it 'should show the Recent History tray upon clicking' do
         get "/"
         f("#global_nav_history_link").click
         wait_for_ajaximations
         expect(f("[aria-label='Recent History tray']")).to be_displayed
       end
 
-      it 'should show recent history items on Recent History tray', ignore_js_errors: true do
+      it 'should show recent history items on Recent History tray' do
         get "/"
         f("#global_nav_history_link").click
         wait_for_ajaximations
@@ -140,7 +139,7 @@ describe 'Global Navigation' do
         expect(navigation_element_list[1].attribute('aria-label')).to eq('another assessment, Assignment')
       end
 
-      it 'should include recent history assignment link', ignore_js_errors: true do
+      it 'should include recent history assignment link' do
         get "/"
         f("#global_nav_history_link").click
         wait_for_ajaximations

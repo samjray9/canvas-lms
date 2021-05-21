@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -152,6 +154,7 @@ class FilesController < ApplicationController
   include Api::V1::Attachment
   include Api::V1::Avatar
   include AttachmentHelper
+  include K5Mode
 
   before_action { |c| c.active_tab = "files" }
 
@@ -423,7 +426,7 @@ class FilesController < ApplicationController
 
       @page_title = t('files_page_title', 'Files')
       @body_classes << 'full-width padless-content'
-      js_bundle :react_files
+      js_bundle :files
       css_bundle :react_files
       js_env({
         :FILES_CONTEXTS => files_contexts,
@@ -507,9 +510,8 @@ class FilesController < ApplicationController
       return
     end
     params[:include] = Array(params[:include])
-    if authorized_action(@attachment,@current_user,:read)
+    if read_allowed(@attachment, @current_user, session, params)
       json = attachment_json(@attachment, @current_user, {}, { include: params[:include], omit_verifier_in_app: !value_to_boolean(params[:use_verifiers]) })
-
       json.merge!(doc_preview_json(@attachment, @current_user))
       render :json => json
     end
@@ -1099,7 +1101,7 @@ class FilesController < ApplicationController
   # Update some settings on the specified file
   #
   # @argument name [String]
-  #   The new display name of the file
+  #   The new display name of the file, with a limit of 255 characters.
   #
   # @argument parent_folder_id [String]
   #   The id of the folder to move this file into.
@@ -1147,7 +1149,7 @@ class FilesController < ApplicationController
         end
       end
 
-      @attachment.display_name = params[:name] if params.key?(:name)
+      @attachment.display_name = params[:name].truncate(255) if params.key?(:name)
       @attachment.lock_at = params[:lock_at] if params.key?(:lock_at)
       @attachment.unlock_at = params[:unlock_at] if params.key?(:unlock_at)
       @attachment.locked = value_to_boolean(params[:locked]) if params.key?(:locked)

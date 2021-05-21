@@ -9,25 +9,13 @@ exports[`groups itemsForDay that come in on prop changes 1`] = `
     color="inherit"
     level="h2"
   >
-    <Text
-      as="div"
-      letterSpacing="normal"
-      lineHeight="condensed"
-      size="medium"
-      transform="uppercase"
-      wrap="normal"
+    <div
+      className="Day-styles__secondary"
     >
       Tuesday
-    </Text>
-    <Text
-      as="div"
-      letterSpacing="normal"
-      lineHeight="condensed"
-      size="medium"
-      wrap="normal"
-    >
+      , 
       April 25, 2017
-    </Text>
+    </div>
   </Heading>
   <div>
     <Animatable(ResponsiveGrouping)
@@ -54,6 +42,8 @@ exports[`groups itemsForDay that come in on prop changes 1`] = `
         ]
       }
       key="Course128"
+      simplifiedControls={false}
+      singleCourseView={false}
       theme={
         Object {
           "titleColor": "#00AC18",
@@ -85,6 +75,8 @@ exports[`groups itemsForDay that come in on prop changes 1`] = `
         ]
       }
       key="Course256"
+      simplifiedControls={false}
+      singleCourseView={false}
       theme={
         Object {
           "titleColor": "#00AC18",
@@ -105,25 +97,13 @@ exports[`groups itemsForDay that come in on prop changes 2`] = `
     color="inherit"
     level="h2"
   >
-    <Text
-      as="div"
-      letterSpacing="normal"
-      lineHeight="condensed"
-      size="medium"
-      transform="uppercase"
-      wrap="normal"
+    <div
+      className="Day-styles__secondary"
     >
       Tuesday
-    </Text>
-    <Text
-      as="div"
-      letterSpacing="normal"
-      lineHeight="condensed"
-      size="medium"
-      wrap="normal"
-    >
+      , 
       April 25, 2017
-    </Text>
+    </div>
   </Heading>
   <div>
     <Animatable(ResponsiveGrouping)
@@ -150,6 +130,8 @@ exports[`groups itemsForDay that come in on prop changes 2`] = `
         ]
       }
       key="Course128"
+      simplifiedControls={false}
+      singleCourseView={false}
       theme={
         Object {
           "titleColor": "#00AC18",
@@ -189,6 +171,8 @@ exports[`groups itemsForDay that come in on prop changes 2`] = `
         ]
       }
       key="Course256"
+      simplifiedControls={false}
+      singleCourseView={false}
       theme={
         Object {
           "titleColor": "#00AC18",
@@ -215,6 +199,8 @@ exports[`groups itemsForDay that come in on prop changes 2`] = `
         ]
       }
       key="Notes"
+      simplifiedControls={false}
+      singleCourseView={false}
       theme={
         Object {
           "titleColor": "#00AC18",
@@ -235,25 +221,13 @@ exports[`groups itemsForDay that have no context into the "Notes" category 1`] =
     color="inherit"
     level="h2"
   >
-    <Text
-      as="div"
-      letterSpacing="normal"
-      lineHeight="condensed"
-      size="medium"
-      transform="uppercase"
-      wrap="normal"
+    <div
+      className="Day-styles__secondary"
     >
       Tuesday
-    </Text>
-    <Text
-      as="div"
-      letterSpacing="normal"
-      lineHeight="condensed"
-      size="medium"
-      wrap="normal"
-    >
+      , 
       April 25, 2017
-    </Text>
+    </div>
   </Heading>
   <div>
     <Animatable(ResponsiveGrouping)
@@ -280,6 +254,8 @@ exports[`groups itemsForDay that have no context into the "Notes" category 1`] =
         ]
       }
       key="Course128"
+      simplifiedControls={false}
+      singleCourseView={false}
       theme={
         Object {
           "titleColor": "#00AC18",
@@ -319,6 +295,8 @@ exports[`groups itemsForDay that have no context into the "Notes" category 1`] =
         ]
       }
       key="Course256"
+      simplifiedControls={false}
+      singleCourseView={false}
       theme={
         Object {
           "titleColor": "#00AC18",
@@ -345,6 +323,8 @@ exports[`groups itemsForDay that have no context into the "Notes" category 1`] =
         ]
       }
       key="Notes"
+      simplifiedControls={false}
+      singleCourseView={false}
       theme={
         Object {
           "titleColor": "#00AC18",
@@ -365,25 +345,13 @@ exports[`renders grouping correctly when having itemsForDay 1`] = `
     color="inherit"
     level="h2"
   >
-    <Text
-      as="div"
-      letterSpacing="normal"
-      lineHeight="condensed"
-      size="medium"
-      transform="uppercase"
-      wrap="normal"
+    <div
+      className="Day-styles__secondary"
     >
       Tuesday
-    </Text>
-    <Text
-      as="div"
-      letterSpacing="normal"
-      lineHeight="condensed"
-      size="medium"
-      wrap="normal"
-    >
+      , 
       April 25, 2017
-    </Text>
+    </div>
   </Heading>
   <div>
     <Animatable(ResponsiveGrouping)
@@ -411,6 +379,8 @@ exports[`renders grouping correctly when having itemsForDay 1`] = `
         ]
       }
       key="Course128"
+      simplifiedControls={false}
+      singleCourseView={false}
       theme={
         Object {
           "titleColor": "#00AC18",
@@ -453,6 +423,8 @@ exports[`renders grouping correctly when having itemsForDay 1`] = `
         ]
       }
       key="Course256"
+      simplifiedControls={false}
+      singleCourseView={false}
       theme={
         Object {
           "titleColor": "#00AC18",
@@ -485,6 +457,8 @@ exports[`renders grouping correctly when having itemsForDay 1`] = `
         ]
       }
       key="Group256"
+      simplifiedControls={false}
+      singleCourseView={false}
       theme={
         Object {
           "titleColor": "#00AC18",
@@ -505,25 +479,13 @@ exports[`renders the base component with required props 1`] = `
     color="inherit"
     level="h2"
   >
-    <Text
-      as="div"
-      letterSpacing="normal"
-      lineHeight="condensed"
-      size="medium"
-      transform="uppercase"
-      wrap="normal"
+    <div
+      className="Day-styles__secondary"
     >
       Tuesday
-    </Text>
-    <Text
-      as="div"
-      letterSpacing="normal"
-      lineHeight="condensed"
-      size="medium"
-      wrap="normal"
-    >
+      , 
       April 25, 2017
-    </Text>
+    </div>
   </Heading>
   <div>
     <View

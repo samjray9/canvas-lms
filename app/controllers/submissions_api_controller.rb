@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -85,7 +87,7 @@
 #           "items": { "$ref": "SubmissionComment" }
 #         },
 #         "submission_type": {
-#           "description": "The types of submission ex: ('online_text_entry'|'online_url'|'online_upload'|'media_recording')",
+#           "description": "The types of submission ex: ('online_text_entry'|'online_url'|'online_upload'|'media_recording'|'student_annotation')",
 #           "example": "online_text_entry",
 #           "type": "string",
 #           "allowableValues": {
@@ -93,7 +95,8 @@
 #               "online_text_entry",
 #               "online_url",
 #               "online_upload",
-#               "media_recording"
+#               "media_recording",
+#               "student_annotation"
 #             ]
 #           }
 #         },
@@ -186,6 +189,17 @@
 #           "description": "The date this submission was posted to the student, or nil if it has not been posted.",
 #           "example": "2020-01-02T11:10:30Z",
 #           "type": "datetime"
+#         },
+#         "read_status" : {
+#           "description": "The read status of this submission for the given user (optional). Including read_status will mark submission(s) as read.",
+#           "example": "read",
+#           "type": "string",
+#           "allowableValues": {
+#             "values": [
+#               "read",
+#               "unread"
+#             ]
+#           }
 #         }
 #       }
 #     }
@@ -202,7 +216,7 @@ class SubmissionsApiController < ApplicationController
   #
   # A paginated list of all existing submissions for an assignment.
   #
-  # @argument include[] [String, "submission_history"|"submission_comments"|"rubric_assessment"|"assignment"|"visibility"|"course"|"user"|"group"]
+  # @argument include[] [String, "submission_history"|"submission_comments"|"rubric_assessment"|"assignment"|"visibility"|"course"|"user"|"group"|"read_status"]
   #   Associations to include with the group.  "group" will add group_id and group_name.
   #
   # @argument grouped [Boolean]
@@ -484,15 +498,9 @@ class SubmissionsApiController < ApplicationController
         submissions_scope = submissions_scope.where(:workflow_state => params[:workflow_state])
       end
 
-      submission_preloads = [:originality_reports, {:quiz_submission => :versions}]
+      submission_preloads = [:originality_reports, {:quiz_submission => :versions}, :submission_comments]
       submission_preloads << :attachment unless params[:exclude_response_fields]&.include?("attachments")
       submissions = submissions_scope.preload(submission_preloads).to_a
-
-      ActiveRecord::Associations::Preloader.new.preload(
-        submissions,
-        :submission_comments,
-        SubmissionComment.select(:hidden, :submission_id)
-      )
 
       bulk_load_attachments_and_previews(submissions)
       submissions_for_user = submissions.group_by(&:user_id)
@@ -557,6 +565,9 @@ class SubmissionsApiController < ApplicationController
       submissions = submissions.where("graded_at>?", graded_since_date) if graded_since_date
       submissions = submissions.preload(:user, :originality_reports, {:quiz_submission => :versions})
       submissions = submissions.preload(:attachment) unless params[:exclude_response_fields]&.include?('attachments')
+      if includes.include?("has_postable_comments") || includes.include?("submission_comments")
+        submissions = submissions.preload(:submission_comments)
+      end
 
       # this will speed up pagination for large collections when order_direction is asc
       if order_by == 'graded_at' && order_direction == 'asc'
@@ -585,7 +596,7 @@ class SubmissionsApiController < ApplicationController
   #
   # Get a single submission, based on user id.
   #
-  # @argument include[] [String, "submission_history"|"submission_comments"|"rubric_assessment"|"full_rubric_assessment"|"visibility"|"course"|"user"]
+  # @argument include[] [String, "submission_history"|"submission_comments"|"rubric_assessment"|"full_rubric_assessment"|"visibility"|"course"|"user"|"read_status"]
   #   Associations to include with the group.
   def show
     @assignment = api_find(@context.assignments.active, params[:assignment_id])

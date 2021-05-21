@@ -25,7 +25,7 @@ describe "grades" do
   include_context "in-process server selenium tests"
 
   before(:once) do
-    @teacher1 = course_with_teacher(name: 'Teacher Boss1', active_user: true, active_enrollment: true, active_course: true).user
+    @teacher1 = course_with_teacher(name: 'Dedicated Teacher1', active_user: true, active_enrollment: true, active_course: true).user
     @student_1 = course_with_student(course: @course, name: "Student 1", active_all:true).user
     @student_2 = course_with_student(course: @course, name: "Student 2", active_all:true).user
 
@@ -469,7 +469,7 @@ describe "grades" do
   end
 
   context "as an observer" do
-    it "should allow observers to see grades of all enrollment associations", priority: "1", test_id: 229883, ignore_js_errors: true do
+    it "should allow observers to see grades of all enrollment associations", priority: "1", test_id: 229883 do
       @obs = user_model(name: "Observer")
       e1 = @course.observer_enrollments.create(user: @obs, workflow_state: "active")
       e1.associated_user = @student_1

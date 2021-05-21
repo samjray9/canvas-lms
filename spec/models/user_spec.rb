@@ -435,7 +435,7 @@ describe User do
           user.update_root_account_ids
         }.to change {
           user.root_account_ids
-        }.from(nil).to([root_account.global_id])
+        }.from([]).to([root_account.global_id])
       end
 
       context 'and communication channels for the user exist' do
@@ -448,7 +448,7 @@ describe User do
             user.update_root_account_ids
           }.to change {
             user.communication_channels.first.root_account_ids
-          }.from(nil).to([root_account.id])
+          }.from([]).to([root_account.id])
         end
       end
     end
@@ -472,7 +472,7 @@ describe User do
           user.update_root_account_ids
         }.to change {
           user.root_account_ids&.sort
-        }.from(nil).to(
+        }.from([]).to(
           [root_account.id, shard_two_root_account.global_id].sort
         )
       end
@@ -543,6 +543,32 @@ describe User do
       @section2 = @course.course_sections.create!(:name => "Other Section")
       @fake_student = @course.reload.student_view_student
       expect(@fake_student.reload.user_account_associations).to be_empty
+    end
+
+    it "removes account associations after an enrollment concludes" do
+      subaccount1 = Account.default.sub_accounts.create!
+      subaccount2 = Account.default.sub_accounts.create!
+      course1 = course_with_student(active_all: true, account: subaccount1).course
+      course2 = course_with_student(active_all: true, account: subaccount2, user: @student).course
+      expect(@student.user_account_associations.pluck(:account_id)).to match_array([Account.default, subaccount1, subaccount2].map(&:id))
+
+      course2.complete
+      @student.update_account_associations
+      expect(@student.enrollments.where(course_id: course2).take.enrollment_state.state).to eq 'completed' # sanity check
+      expect(@student.user_account_associations.pluck(:account_id)).to match_array([Account.default, subaccount1].map(&:id))
+    end
+
+    it "removes account associations for inactive/rejected enrollments" do
+      subaccount1 = Account.default.sub_accounts.create!
+      subaccount2 = Account.default.sub_accounts.create!
+      enrollment1 = course_with_student(active_all: true, account: subaccount1)
+      enrollment2 = course_with_student(active_all: true, account: subaccount2, user: @student)
+      expect(@student.user_account_associations.pluck(:account_id)).to match_array([Account.default, subaccount1, subaccount2].map(&:id))
+
+      enrollment1.reject
+      enrollment2.update workflow_state: 'inactive'
+      @student.update_account_associations
+      expect(@student.user_account_associations.pluck(:account_id)).to be_empty
     end
 
     context "sharding" do
@@ -1034,6 +1060,19 @@ describe User do
     it "allows for narrowing courses by enrollments" do
       expect(@student2.check_courses_right?(@teacher2, :manage_account_memberships, @student2.enrollments.concluded)).to be_falsey
     end
+
+    context "sharding" do
+      specs_require_sharding
+
+      it "works cross-shard" do
+        @shard1.activate do
+          account = Account.create!
+          course_with_teacher(account: account, active_all: true)
+          course_with_student(course: @course, user: @student1, active_all: true)
+          expect(@student1.check_courses_right?(@teacher, :read_forum)).to eq true
+        end
+      end
+    end
   end
 
   context "search_messageable_users" do
@@ -1166,28 +1205,6 @@ describe User do
       expect(messageable_users).to include @student.id
       expect(messageable_users).not_to include @this_section_user.id
       expect(messageable_users).not_to include @other_section_user.id
-    end
-
-    describe "#observation_link?" do
-      before(:once) do
-        @student, @observer = user_model, user_model
-        @student_enrollment = @course.enroll_user(@student, 'StudentEnrollment', enrollment_state: 'active')
-        @enrollment = @course.enroll_user(@observer, 'ObserverEnrollment', enrollment_state: 'active', associated_user: @student.id, section: @student_enrollment.course_section)
-      end
-
-      it "does not find an observation link when one does not exist between observer and student" do
-        expect(@observer.observation_link?(@student, @course.root_account_id)).to be false
-      end
-
-      it "finds an observation link when one already exists" do
-        add_linked_observer(@student, @observer)
-
-        expect(@observer.observation_link?(@student, @course.root_account_id)).to be true
-      end
-
-      it "always finds an observation link between the user and itself" do
-        expect(@observer.observation_link?(@observer, @course.root_account_id)).to be true
-      end
     end
 
     it "should not show non-linked observers to students" do
@@ -1445,8 +1462,8 @@ describe User do
       expect(User.avatar_fallback_url("http://somedomain/path", OpenObject.new(:host => "bar", :protocol => "https://"))).to eq(
         "http://somedomain/path"
       )
-      expect(User.avatar_fallback_url('%{fallback}')).to eq(
-        '%{fallback}'
+      expect(User.avatar_fallback_url("http://localhost/path", OpenObject.new(:host => "bar", :protocol => "https://"))).to eq(
+        "https://bar/path"
       )
     end
 
@@ -2295,7 +2312,19 @@ describe User do
       p = user.pseudonyms.create!(:account => account, :unique_id => 'user')
       account.account_users.create!(user: user)
 
-      expect(user).to receive(:pseudonyms).never
+      expect(user).not_to receive(:pseudonyms)
+      expect(user.mfa_settings(pseudonym_hint: p)).to eq :required
+    end
+
+    it "is required for an auth provider that has it required" do
+      account = Account.create(settings: { mfa_settings: :optional })
+      ap = account.canvas_authentication_provider
+      ap.update!(mfa_required: true)
+      p = user.pseudonyms.create!(account: account, unique_id: 'user', authentication_provider: ap)
+
+      expect(user.mfa_settings).to eq :required
+
+      expect(user).not_to receive(:pseudonyms)
       expect(user.mfa_settings(pseudonym_hint: p)).to eq :required
     end
   end
@@ -2462,15 +2491,15 @@ describe User do
   describe "preferred_gradebook_version" do
     subject { user.preferred_gradebook_version }
 
-    let(:user) { User.new }
+    let(:user) { User.create! }
 
     it "returns default gradebook when preferred" do
-      user.preferences[:gradebook_version] = 'default'
+      user.set_preference(:gradebook_version, "default")
       is_expected.to eq 'default'
     end
 
     it "returns individual gradebook when preferred" do
-      user.preferences[:gradebook_version] = 'individual'
+      user.set_preference(:gradebook_version, "individual")
       is_expected.to eq 'individual'
     end
 
@@ -3428,6 +3457,34 @@ describe User do
 
     it "should still include it if select values aren't present" do
       expect(User.all.with_last_login.to_sql.scan(".*").count).to eq 1
+    end
+  end
+
+  describe "#can_create_enrollment_for?" do
+    before(:once) do
+      course_with_ta
+      @course.root_account.enable_feature!(:granular_permissions_manage_users)
+    end
+
+    it "checks permissions" do
+      expect(@ta.can_create_enrollment_for?(@course, nil, 'TeacherEnrollment')).to be_falsey
+      expect(@ta.can_create_enrollment_for?(@course, nil, 'TaEnrollment')).to be_falsey
+      expect(@ta.can_create_enrollment_for?(@course, nil, 'DesignerEnrollment')).to be_falsey
+      expect(@ta.can_create_enrollment_for?(@course, nil, 'StudentEnrollment')).to be_truthy
+      expect(@ta.can_create_enrollment_for?(@course, nil, 'ObserverEnrollment')).to be_truthy
+    end
+  end
+
+  describe "comment_bank_items" do
+    before(:once) do
+      course_with_teacher
+      @c1 = comment_bank_item_model({user: @teacher})
+      @c2 = comment_bank_item_model({user: @teacher})
+    end
+
+    it "only returns active records" do
+      @c2.destroy
+      expect(@teacher.comment_bank_items).to eq [@c1]
     end
   end
 end

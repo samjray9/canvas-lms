@@ -2749,7 +2749,7 @@ describe DiscussionTopicsController, type: :request do
       expect(v0_r1['id']).to eq @reply2.id
       expect(v0_r1['user_id']).to eq @teacher.id
 
-      message = Nokogiri::HTML::DocumentFragment.parse(v0_r1["message"])
+      message = Nokogiri::HTML5.fragment(v0_r1["message"])
 
       a_tag = message.css("p a").first
       expect(a_tag["href"]).to eq "http://www.example.com/courses/#{@course.id}/files/#{@reply2_attachment.id}/download"
@@ -3065,6 +3065,34 @@ describe DiscussionTopicsController, type: :request do
         {},
         {},
         :expected_status => 200)
+    end
+
+    it "duplicate doesn't work if student" do
+      @user = student_in_course(active_all: true).user
+
+      api_call(:post, "/api/v1/courses/#{@course.id}/discussion_topics/#{@group_topic.id}/duplicate",
+               { :controller => "discussion_topics_api",
+                 :action => "duplicate",
+                 :format => "json",
+                 :course_id => @course.to_param,
+                 :topic_id => @group_topic.to_param },
+               {},
+               {},
+               :expected_status => 401)
+    end
+
+    it "duplicate work if admin" do
+      @user = account_admin_user
+
+      api_call(:post, "/api/v1/courses/#{@course.id}/discussion_topics/#{@group_topic.id}/duplicate",
+               { :controller => "discussion_topics_api",
+                 :action => "duplicate",
+                 :format => "json",
+                 :course_id => @course.to_param,
+                 :topic_id => @group_topic.to_param },
+               {},
+               {},
+               :expected_status => 200)
     end
 
     it "duplicate carries sections over" do

@@ -88,9 +88,11 @@ module CustomSeleniumActions
   # can (but wait if necessary), e.g.
   #
   #   expect(f('#content')).not_to contain_jqcss('.gone:visible')
-  def fj(selector, scope = nil)
+  def fj(selector, scope = nil, timeout: nil)
+    wait_opts = { method: :fj }
+    wait_opts[:timeout] = timeout if timeout
     stale_element_protection do
-      wait_for(method: :fj) do
+      wait_for(**wait_opts) do
         find_with_jquery selector, scope
       end or raise Selenium::WebDriver::Error::NoSuchElementError, "Unable to locate element: #{selector.inspect}"
     end
@@ -243,8 +245,8 @@ module CustomSeleniumActions
     Selenium::WebDriver::Support::Select.new(f(selector, scope)).options
   end
 
-  # this is a smell; you should know what's on the page you're testing,
-  # so conditionally doing stuff based on elements == :poop:
+  # conditionally doing stuff based on what elements are on the page
+  # is a smell; you should know what's on the page you're testing.
   def element_exists?(selector, xpath = false)
     disable_implicit_wait { xpath ? fxpath(selector) : f(selector) }
     true
@@ -593,6 +595,7 @@ module CustomSeleniumActions
     dy = target_location.y - source_location.y
 
     drag_with_js source_selector, dx, dy
+    wait_for_ajaximations
   end
 
   ##
@@ -672,7 +675,7 @@ module CustomSeleniumActions
     driver.execute_script("$(#{selector.to_json})[0].scrollIntoView()")
   end
 
-  # see public/javascripts/vendor/jquery.scrollTo.js
+  # see packages/jquery-scroll-to-visible
   # target can be:
   #  - A number position (will be applied to all axes).
   #  - A string position ('44', '100px', '+=90', etc ) will be applied to all axes

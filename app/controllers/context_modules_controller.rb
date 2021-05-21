@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -23,6 +25,8 @@ class ContextModulesController < ApplicationController
   before_action :require_context
   add_crumb(proc { t('#crumbs.modules', "Modules") }) { |c| c.send :named_context_url, c.instance_variable_get("@context"), :context_context_modules_url }
   before_action { |c| c.active_tab = "modules" }
+
+  include K5Mode
 
   module ModuleIndexHelper
     include ContextModulesHelper
@@ -52,7 +56,7 @@ class ContextModulesController < ApplicationController
     end
 
     def load_modules
-      @modules = @context.modules_visible_to(@current_user)
+      @modules = @context.modules_visible_to(@current_user).limit(Setting.get('course_module_limit', '1000').to_i)
       @modules.each(&:check_for_stale_cache_after_unlocking!)
       @collapsed_modules = ContextModuleProgression.for_user(@current_user).for_modules(@modules).pluck(:context_module_id, :collapsed).select{|cm_id, collapsed| !!collapsed }.map(&:first)
       @section_visibility = @context.course_section_visibility(@current_user)
@@ -451,7 +455,7 @@ class ContextModulesController < ApplicationController
     elsif @progression.locked?
       res[:locked] = true
       res[:modules] = []
-      previous_modules = @context.context_modules.active.where('position<?', @module.position).order(:position).to_a
+      previous_modules = @context.context_modules.active.where('position<?', @module.position).ordered.to_a
       previous_modules.reverse!
       valid_previous_modules = []
       prereq_ids = @module.prerequisites.select{|p| p[:type] == 'context_module' }.map{|p| p[:id] }

@@ -138,6 +138,11 @@ module ActionView::TestCase::Behavior
   end
 end
 
+if ENV['ENABLE_AXE_SELENIUM'] == '1'
+  require_relative './axe_selenium_helper'
+  AxeSelenium.install!
+end
+
 module RSpec::Rails
   module ViewExampleGroup
     module ExampleMethods
@@ -147,7 +152,7 @@ module RSpec::Rails
 
   RSpec::Matchers.define :have_tag do |expected|
     match do |actual|
-      !!Nokogiri::HTML(actual).at_css(expected)
+      !!Nokogiri::HTML5(actual).at_css(expected)
     end
   end
 
@@ -330,7 +335,8 @@ RSpec::Expectations.configuration.on_potential_false_positives = :raise
 require 'rspec_junit_formatter'
 
 RSpec.configure do |config|
-  config.example_status_persistence_file_path = Rails.root.join('tmp', 'rspec')
+  config.example_status_persistence_file_path = Rails.root.join('tmp', "rspec#{ENV.fetch('PARALLEL_INDEX', '0').to_i}")
+  config.fail_if_no_examples = true
   config.use_transactional_fixtures = true
   config.use_instantiated_fixtures = false
   config.fixture_path = Rails.root.join('spec', 'fixtures')
@@ -349,8 +355,8 @@ RSpec.configure do |config|
   config.include PGCollkeyHelper
   config.project_source_dirs << "gems" # so that failures here are reported properly
 
-  # DOCKER_PROCESSES is only used on Jenkins and we only care to have RspecJunitFormatter on Jenkins.
-  if ENV['DOCKER_PROCESSES']
+  # RSPEC_PROCESSES is only used on Jenkins and we only care to have RspecJunitFormatter on Jenkins.
+  if ENV['RSPEC_PROCESSES']
     file = "log/results/results-#{ENV.fetch('PARALLEL_INDEX', '0').to_i}.xml"
     # if file already exists this is a rerun of a failed spec, don't generate new xml.
     config.add_formatter "RspecJunitFormatter", file unless File.file?(file)
@@ -466,15 +472,15 @@ RSpec.configure do |config|
       super
     end
   end
-  Canvas.singleton_class.prepend(TrackRedisUsage)
-  Canvas.redis_used = true
+  Canvas::Redis.singleton_class.prepend(TrackRedisUsage)
+  Canvas::Redis.redis_used = true
 
   config.before :each do
-    if Canvas.redis_enabled? && Canvas.redis_used
+    if Canvas::Redis.redis_enabled? && Canvas::Redis.redis_used
       # yes, we really mean to run this dangerous redis command
-      GuardRail.activate(:deploy) { Canvas.redis.flushdb }
+      GuardRail.activate(:deploy) { Canvas::Redis.redis.flushdb }
     end
-    Canvas.redis_used = false
+    Canvas::Redis.redis_used = false
   end
 
   #****************************************************************
@@ -568,8 +574,8 @@ RSpec.configure do |config|
   def set_cache(new_cache)
     cache_opts = {}
     if new_cache == :redis_cache_store
-      if Canvas.redis_enabled?
-        cache_opts[:redis] = Canvas.redis
+      if Canvas::Redis.redis_enabled?
+        cache_opts[:redis] = Canvas::Redis.redis
       else
         skip "redis required"
       end
@@ -581,7 +587,7 @@ RSpec.configure do |config|
     allow_any_instance_of(ActionController::Base).to receive(:cache_store).and_return(new_cache)
     allow(ActionController::Base).to receive(:perform_caching).and_return(true)
     allow_any_instance_of(ActionController::Base).to receive(:perform_caching).and_return(true)
-    MultiCache.reset
+    allow(MultiCache).to receive(:cache).and_return(new_cache)
   end
 
   def specs_require_cache(new_cache=:memory_store)
@@ -593,6 +599,7 @@ RSpec.configure do |config|
   def enable_cache(new_cache=:memory_store)
     previous_cache = Rails.cache
     previous_perform_caching = ActionController::Base.perform_caching
+    previous_multicache = MultiCache.cache
     set_cache(new_cache)
     if block_given?
       begin
@@ -603,6 +610,7 @@ RSpec.configure do |config|
         allow_any_instance_of(ActionController::Base).to receive(:cache_store).and_return(previous_cache)
         allow(ActionController::Base).to receive(:perform_caching).and_return(previous_perform_caching)
         allow_any_instance_of(ActionController::Base).to receive(:perform_caching).and_return(previous_perform_caching)
+        allow(MultiCache).to receive(:cache).and_return(previous_multicache)
       end
     end
   end
@@ -647,7 +655,7 @@ RSpec.configure do |config|
   end
 
   def json_parse(json_string = response.body)
-    JSON.parse(json_string.sub(%r{^while\(1\);}, ''))
+    JSON.parse(json_string)
   end
 
   # inspired by http://blog.jayfields.com/2007/08/ruby-calling-methods-of-specific.html
@@ -908,8 +916,4 @@ end
 
 def enable_default_developer_key!
   enable_developer_key_account_binding!(DeveloperKey.default)
-end
-
-def run_live_events_specs?
-  ENV.fetch('RUN_LIVE_EVENTS_SPECS', '0') == '1'
 end

@@ -1822,6 +1822,17 @@ describe 'Submissions API', type: :request do
         submission_json = student_json.fetch("submissions").find { |s| s.fetch("id") == student1_sub.id }
         expect(submission_json.fetch("has_postable_comments")).to be false
       end
+
+      it "is false when unposted and only draft comments exist" do
+        student1_sub.add_comment(
+          author: @teacher,
+          comment: "maybe bad job but not sure, let me think about it",
+          hidden: true,
+          draft_comment: true
+        )
+        submission_json = student_json.fetch("submissions").find { |s| s.fetch("id") == student1_sub.id }
+        expect(submission_json.fetch("has_postable_comments")).to be false
+      end
     end
 
     context 'OriginalityReport' do
@@ -4298,6 +4309,13 @@ describe 'Submissions API', type: :request do
           This is <i>some</i> text. The  sanitization will take effect.
         </p>}
         expect(json['body']).to eq @submission.body
+      end
+
+      it "creates a student annotation submission" do
+        a1 = attachment_model(:context => @course)
+        @assignment.update(submission_types: 'student_annotation', annotatable_attachment_id: a1.id)
+        json = api_call(:post, @url, @args, { :submission => { submission_type: "student_annotation", annotatable_attachment_id: a1.id } }, {}, expected_status: 201)
+        expect(json['workflow_state']).to eq 'submitted'
       end
 
       it "processs html content in body" do

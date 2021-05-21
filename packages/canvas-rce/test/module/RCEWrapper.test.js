@@ -53,6 +53,8 @@ function createdMountedElement(additionalProps = {}) {
       textareaId,
       tinymce: fakeTinyMCE,
       editorOptions: {},
+      liveRegion: () => document.getElementById('flash_screenreader_holder'),
+      canUploadFiles: false,
       ...trayProps(),
       ...additionalProps
     })
@@ -63,8 +65,14 @@ function createdMountedElement(additionalProps = {}) {
 function trayProps() {
   return {
     trayProps: {
+      host: 'rcs.host',
+      jwt: 'donotlookatme',
       contextType: 'course',
-      contextId: '17'
+      contextId: '17',
+      containingContext: {
+        contextType: 'course',
+        contextId: '17'
+      }
     }
   }
 }
@@ -77,6 +85,7 @@ describe('RCEWrapper', () => {
   beforeEach(() => {
     jsdomify.create(`
       <!DOCTYPE html><html><head></head><body>
+      <div id="flash_screenreader_holder"/>
       <div id="app">
         <textarea id="${textareaId}" />
       </div>
@@ -140,8 +149,17 @@ describe('RCEWrapper', () => {
     fakeTinyMCE = {
       triggerSave: () => 'called',
       execCommand: () => 'command executed',
+      // plugins
+      create: () => {},
+      PluginManager: {
+        add: () => {}
+      },
+      plugins: {
+        AccessibilityChecker: {}
+      },
       editors: [editor]
     }
+    global.tinymce = fakeTinyMCE
 
     sinon.spy(editor, 'insertContent')
   })

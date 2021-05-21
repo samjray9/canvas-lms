@@ -44,13 +44,8 @@ improved_outcomes_management:
   display_name: Improved Outcomes Management
   description: Helps administrators and teachers make more meaningful decisions as they import,
     organize, and edit outcomes in their account and courses.
-inactive_concluded_lmgb_filters:
+assignment_comment_library:
   state: hidden
   applies_to: RootAccount
-  display_name: Student filters in LMGB
-  description: Allow inactive and/or concluded enrollments to be displayed in LMGB
-enable_webcam_submission:
-  state: hidden
-  applies_to: RootAccount
-  display_name: Enable Webcam on Submissions
-  description: Allow students to submit photo using their webcam.
+  display_name: Comment Library
+  description: Allows users to save and search frequently used feedback in a library of comments to be used in SpeedGrader.

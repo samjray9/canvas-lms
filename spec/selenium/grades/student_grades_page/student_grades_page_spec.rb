@@ -92,7 +92,7 @@ describe "gradebook - logged in as a student" do
         StudentGradesPage.visit_as_teacher(@course, @student)
       end
 
-      it 'should only show assignments that belong to the selected grading period', priority: "1", test_id: 2528639, ignore_js_errors: true do
+      it 'should only show assignments that belong to the selected grading period', priority: "1", test_id: 2528639 do
         StudentGradesPage.select_period_by_name(past_period_name)
         expect_new_page_load { StudentGradesPage.click_apply_button }
         expect(StudentGradesPage.assignment_titles).to include(past_assignment_name)
@@ -104,8 +104,8 @@ describe "gradebook - logged in as a student" do
   describe 'grade-only assignment' do
     before :once do
       skip('Unskip in GRADE-1359')
-      course_with_teacher(name: "Teacher Boss", active_course: true, active_user: true)
-      course_with_student(course: @course, name: "Student Slave", active_all: true)
+      course_with_teacher(name: "Dedicated Teacher", active_course: true, active_user: true)
+      course_with_student(course: @course, name: "Hardworking Student", active_all: true)
       @assignment = @course.assignments.create!(
         title: 'Grade Only Assignment',
         grading_type: 'grade_only',

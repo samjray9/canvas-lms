@@ -19,15 +19,11 @@
  */
 
 library "canvas-builds-library@${env.CANVAS_BUILDS_REFSPEC}"
+loadLocalLibrary('local-lib', 'build/new-jenkins/library')
 
-def COFFEE_NODE_COUNT = 4
-def DEFAULT_NODE_COUNT = 1
-def JSG_NODE_COUNT = 3
-
-def copyFiles(dockerName, dockerPath, hostPath) {
-  sh "mkdir -vp ./$hostPath"
-  sh "docker cp \$(docker ps -qa -f name=$dockerName):/usr/src/app/$dockerPath ./$hostPath"
-}
+final COFFEE_NODE_COUNT = 4
+final DEFAULT_NODE_COUNT = 1
+final JSG_NODE_COUNT = 3
 
 def makeKarmaStage(group, ciNode, ciTotal) {
   return {
@@ -37,27 +33,19 @@ def makeKarmaStage(group, ciNode, ciTotal) {
       "CONTAINER_NAME=tests-karma-${group}-${ciNode}",
       "JSPEC_GROUP=${group}"
     ]) {
-      try {
-        credentials.withSentryCredentials {
-          sh 'build/new-jenkins/js/tests-karma.sh'
-        }
-      } finally {
-        copyFiles(env.CONTAINER_NAME, 'coverage-js', "./tmp/${env.CONTAINER_NAME}")
-      }
+      executeTestStage('build/new-jenkins/js/tests-karma.sh')
     }
   }
 }
 
-def cleanupFn() {
-  timeout(time: 2) {
+def executeTestStage(scriptName) {
+  withEnv([
+    "TEST_RESULT_OUTPUT_DIR=${env.BASE_TEST_RESULT_OUTPUT_DIR}/${env.CONTAINER_NAME}"
+  ]) {
     try {
-      if(env.TEST_SUITE != 'upload') {
-        archiveArtifacts artifacts: 'tmp/**/*.xml'
-        junit "tmp/**/*.xml"
-        sh 'find ./tmp -path "*.xml"'
-      }
+      sh scriptName
     } finally {
-      libraryScript.execute 'bash/docker-cleanup.sh --allow-failure'
+      jsStage.tearDownNode()
     }
   }
 }
@@ -75,81 +63,54 @@ pipeline {
   }
 
   environment {
-    COMPOSE_DOCKER_CLI_BUILD=1
+    BUILD_REGISTRY_FQDN = configuration.buildRegistryFQDN()
+    COMPOSE_DOCKER_CLI_BUILD = 1
     COMPOSE_FILE = 'docker-compose.new-jenkins-js.yml'
-    DOCKER_BUILDKIT=1
+    DOCKER_BUILDKIT = 1
     FORCE_FAILURE = configuration.forceFailureJS()
-    PROGRESS_NO_TRUNC=1
+    PROGRESS_NO_TRUNC = 1
     RAILS_LOAD_ALL_LOCALES = getLoadAllLocales()
-    SENTRY_URL="https://sentry.insops.net"
-    SENTRY_ORG="instructure"
-    SENTRY_PROJECT="master-javascript-build"
+    BASE_TEST_RESULT_OUTPUT_DIR = 'js-results'
   }
 
   stages {
     stage('Environment') {
       steps {
         script {
-          protectedNode('canvas-docker', { cleanupFn() }) {
-            stage('Setup') {
-              cleanAndSetup()
-              timeout(time: 3) {
-                sh 'rm -vrf ./tmp/*'
-                def refspecToCheckout = env.GERRIT_PROJECT == "canvas-lms" ? env.JENKINSFILE_REFSPEC : env.CANVAS_LMS_REFSPEC
+          def stageHooks = [
+            onNodeAcquired: jsStage.&setupNode,
+          ]
 
-                checkoutRepo("canvas-lms", refspecToCheckout, 1)
+          extendedStage('Runner').hooks(stageHooks).nodeRequirements(label: 'canvas-docker', podTemplate: libraryResource('/pod_templates/docker_base.yml'), container: 'docker').obeysAllowStages(false).timeout(10).execute {
+            def tests = [:]
 
-                sh "./build/new-jenkins/docker-with-flakey-network-protection.sh pull $KARMA_RUNNER_IMAGE"
-              }
-            }
-
-            stage('Run Tests') {
-              timeout(time: 10) {
-                script {
-                  def tests = [:]
-
-                  if(env.TEST_SUITE == 'jest') {
-                    tests['Jest'] = {
-                      withEnv(['CONTAINER_NAME=tests-jest']) {
-                        try {
-                          credentials.withSentryCredentials {
-                            sh 'build/new-jenkins/js/tests-jest.sh'
-                          }
-                        } finally {
-                          copyFiles(env.CONTAINER_NAME, 'coverage-js', "./tmp/${env.CONTAINER_NAME}")
-                        }
-                      }
-                    }
-                  } else if(env.TEST_SUITE == 'coffee') {
-                    for(int i = 0; i < COFFEE_NODE_COUNT; i++) {
-                      tests["Karma - Spec Group - coffee${i}"] = makeKarmaStage('coffee', i, COFFEE_NODE_COUNT)
-                    }
-                  } else if(env.TEST_SUITE == 'karma') {
-                    tests['Packages'] = {
-                      withEnv(['CONTAINER_NAME=tests-packages']) {
-                        try {
-                          credentials.withSentryCredentials {
-                            sh 'build/new-jenkins/js/tests-packages.sh'
-                          }
-                        } finally {
-                          copyFiles(env.CONTAINER_NAME, 'packages', "./tmp/${env.CONTAINER_NAME}")
-                        }
-                      }
-                    }
-
-                    for(int i = 0; i < JSG_NODE_COUNT; i++) {
-                      tests["Karma - Spec Group - jsg${i}"] = makeKarmaStage('jsg', i, JSG_NODE_COUNT)
-                    }
-
-                    ['jsa', 'jsh'].each { group ->
-                      tests["Karma - Spec Group - ${group}"] = makeKarmaStage(group, 0, DEFAULT_NODE_COUNT)
-                    }
-                  }
-
-                  parallel(tests)
+            if (env.TEST_SUITE == 'jest') {
+              tests['Jest'] = {
+                withEnv(['CONTAINER_NAME=tests-jest']) {
+                  executeTestStage('build/new-jenkins/js/tests-jest.sh')
                 }
               }
+            } else if (env.TEST_SUITE == 'coffee') {
+              for (int i = 0; i < COFFEE_NODE_COUNT; i++) {
+                tests["Karma - Spec Group - coffee${i}"] = makeKarmaStage('coffee', i, COFFEE_NODE_COUNT)
+              }
+            } else if (env.TEST_SUITE == 'karma') {
+              tests['Packages'] = {
+                withEnv(['CONTAINER_NAME=tests-packages']) {
+                  executeTestStage('build/new-jenkins/js/tests-packages.sh')
+                }
+              }
+
+              for (int i = 0; i < JSG_NODE_COUNT; i++) {
+                tests["Karma - Spec Group - jsg${i}"] = makeKarmaStage('jsg', i, JSG_NODE_COUNT)
+              }
+
+              ['jsa', 'jsh'].each { group ->
+                tests["Karma - Spec Group - ${group}"] = makeKarmaStage(group, 0, DEFAULT_NODE_COUNT)
+              }
             }
+
+            parallel(tests)
           }
         }
       }

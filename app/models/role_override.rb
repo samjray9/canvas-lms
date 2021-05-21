@@ -80,6 +80,19 @@ class RoleOverride < ActiveRecord::Base
 
   # Common set of granular permissions for checking rights against
   GRANULAR_FILE_PERMISSIONS = [:manage_files_add, :manage_files_edit, :manage_files_delete].freeze
+  GRANULAR_MANAGE_USER_PERMISSIONS = [
+    :allow_course_admin_actions,
+    :add_student_to_course,
+    :add_teacher_to_course,
+    :add_ta_to_course,
+    :add_observer_to_course,
+    :add_designer_to_course,
+    :remove_student_from_course,
+    :remove_teacher_from_course,
+    :remove_ta_from_course,
+    :remove_observer_from_course,
+    :remove_designer_from_course
+  ].freeze
 
   # immediately register stock canvas-lms permissions
   # NOTE: manage_alerts = Global Announcements and manage_interaction_alerts = Alerts
@@ -138,17 +151,92 @@ class RoleOverride < ActiveRecord::Base
       :available_to => %w(AccountAdmin AccountMembership),
       :account_allows => lambda {|a| a.settings[:catalog_enabled]}
     },
-    :manage_courses => {
-      :label => lambda { t('permissions.manage_', "Manage ( add / edit / delete ) ") },
-      :label_v2 => lambda { t("Courses - add / edit / delete") },
-      :available_to => [
-        'AccountAdmin',
-        'AccountMembership'
+    # deprecated; legacy role override
+    manage_courses: {
+      label: lambda { t('Manage ( add / edit / delete ) ') },
+      label_v2: lambda { t('Courses - add / edit / delete') },
+      available_to: %w[AccountAdmin AccountMembership],
+      true_for: ['AccountAdmin'],
+      account_only: true,
+      account_allows:
+        lambda { |a| !a.root_account.feature_enabled?(:granular_permissions_manage_courses) }
+    },
+    manage_courses_admin: {
+      label: lambda { t('Manage account level course actions') },
+      label_v2: lambda { t('Admin - manage / update') },
+      group: 'manage_courses',
+      group_label: lambda { t('Manage Courses') },
+      available_to: %w[AccountAdmin AccountMembership],
+      true_for: ['AccountAdmin'],
+      account_only: true,
+      account_allows:
+        lambda { |a| a.root_account.feature_enabled?(:granular_permissions_manage_courses) }
+    },
+    manage_courses_add: {
+      label: lambda { t('Add courses') },
+      label_v2: lambda { t('Courses - add') },
+      group: 'manage_courses',
+      group_label: lambda { t('Manage Courses') },
+      available_to: %w[
+        StudentEnrollment
+        TaEnrollment
+        DesignerEnrollment
+        TeacherEnrollment
+        ObserverEnrollment
+        AccountAdmin
+        AccountMembership
       ],
-      :account_only => true,
-      :true_for => [
-        'AccountAdmin'
-      ]
+      true_for: %w[AccountAdmin],
+      account_allows:
+        lambda { |a| a.root_account.feature_enabled?(:granular_permissions_manage_courses) }
+    },
+    manage_courses_publish: {
+      label: lambda { t('Publish courses') },
+      label_v2: lambda { t('Courses - publish') },
+      group: 'manage_courses',
+      group_label: lambda { t('Manage Courses') },
+      available_to: %w[
+        AccountAdmin
+        AccountMembership
+        TeacherEnrollment
+        TaEnrollment
+        DesignerEnrollment
+      ],
+      true_for: %w[AccountAdmin TeacherEnrollment DesignerEnrollment],
+      account_allows:
+        lambda { |a| a.root_account.feature_enabled?(:granular_permissions_manage_courses) }
+    },
+    manage_courses_conclude: {
+      label: lambda { t('Conclude courses') },
+      label_v2: lambda { t('Courses - conclude') },
+      group: 'manage_courses',
+      group_label: lambda { t('Manage Courses') },
+      available_to: %w[
+        AccountAdmin
+        AccountMembership
+        TeacherEnrollment
+        TaEnrollment
+        DesignerEnrollment
+      ],
+      true_for: %w[AccountAdmin TeacherEnrollment DesignerEnrollment],
+      account_allows:
+        lambda { |a| a.root_account.feature_enabled?(:granular_permissions_manage_courses) }
+    },
+    manage_courses_delete: {
+      label: lambda { t('Delete courses') },
+      label_v2: lambda { t('Courses - delete') },
+      group: 'manage_courses',
+      group_label: lambda { t('Manage Courses') },
+      available_to: %w[
+        AccountAdmin
+        AccountMembership
+        TeacherEnrollment
+        TaEnrollment
+        DesignerEnrollment
+      ],
+      true_for: %w[AccountAdmin],
+      account_allows:
+        lambda { |a| a.root_account.feature_enabled?(:granular_permissions_manage_courses) }
     },
     :manage_data_services => {
       :label => lambda { t('permissions.manage_data_services', "Manage data services") },
@@ -218,6 +306,12 @@ class RoleOverride < ActiveRecord::Base
       :true_for => %w(AccountAdmin),
       :available_to => %w(AccountAdmin AccountMembership),
     },
+    :manage_release_notes => {
+      :label => lambda { t('Manage release notes') },
+      :account_only => :site_admin,
+      :true_for => %w(AccountAdmin),
+      :available_to => %w(AccountAdmin AccountMembership),
+    },
     :manage_master_courses => {
       :label => lambda { t('Blueprint Courses (create / edit / associate / delete)') },
       :label_v2 => lambda { t("Blueprint Courses - add / edit / associate / delete") },
@@ -271,7 +365,7 @@ class RoleOverride < ActiveRecord::Base
     },
     :manage_user_observers => {
       :label => lambda { t('permissions.manage_user_observers', "Manage observers for users") },
-      :label_v2 => lambda { t("Users - add / remove observers") },
+      :label_v2 => lambda { t("Users - manage observers") },
       :account_only => :root,
       :true_for => %w(AccountAdmin),
       :available_to => %w(AccountAdmin AccountMembership),
@@ -366,11 +460,20 @@ class RoleOverride < ActiveRecord::Base
         ],
         :true_for => [ 'AccountAdmin' ]
      },
-     :change_course_state => {
-       :label => lambda { t('permissions.change_course_state', "Change course state") },
-       :label_v2 => lambda { t("Course State - manage") },
-       :true_for => %w(AccountAdmin TeacherEnrollment DesignerEnrollment),
-       :available_to => %w(AccountAdmin AccountMembership TeacherEnrollment TaEnrollment DesignerEnrollment),
+     # deprecated; replaced by manage_courses_publish, :manage_courses_conclude, :manage_courses_delete
+     change_course_state: {
+       label: lambda { t('permissions.change_course_state', 'Change course state') },
+       label_v2: lambda { t('Course State - manage') },
+       true_for: %w[AccountAdmin TeacherEnrollment DesignerEnrollment],
+       available_to: %w[
+         AccountAdmin
+         AccountMembership
+         TeacherEnrollment
+         TaEnrollment
+         DesignerEnrollment
+       ],
+       account_allows:
+         lambda { |a| !a.root_account.feature_enabled?(:granular_permissions_manage_courses) }
      },
       :create_collaborations => {
         :label => lambda { t('permissions.create_collaborations', "Create student collaborations") },
@@ -481,7 +584,7 @@ class RoleOverride < ActiveRecord::Base
         "TeacherEnrollment",
         "AccountAdmin"
       ],
-      account_allows: lambda { |a| !a.root_account.feature_enabled?(:granular_permissions_manage_admin_users) }
+      account_allows: lambda { |a| !a.root_account.feature_enabled?(:granular_permissions_manage_users) }
     },
 
     allow_course_admin_actions: {
@@ -498,7 +601,7 @@ class RoleOverride < ActiveRecord::Base
         "TeacherEnrollment",
         "AccountAdmin"
       ],
-      account_allows: lambda { |a| a.root_account.feature_enabled?(:granular_permissions_manage_admin_users) }
+      account_allows: lambda { |a| a.root_account.feature_enabled?(:granular_permissions_manage_users) }
     },
 
     add_teacher_to_course: {
@@ -517,7 +620,7 @@ class RoleOverride < ActiveRecord::Base
       ],
       group: "manage_course_teacher_enrollments",
       group_label: lambda { t("Users - Teachers") },
-      account_allows: lambda { |a| a.root_account.feature_enabled?(:granular_permissions_manage_admin_users) }
+      account_allows: lambda { |a| a.root_account.feature_enabled?(:granular_permissions_manage_users) }
     },
     remove_teacher_from_course: {
       label: lambda { t("Remove Teachers from courses") },
@@ -535,7 +638,7 @@ class RoleOverride < ActiveRecord::Base
       ],
       group: "manage_course_teacher_enrollments",
       group_label: lambda { t("Users - Teachers") },
-      account_allows: lambda { |a| a.root_account.feature_enabled?(:granular_permissions_manage_admin_users) }
+      account_allows: lambda { |a| a.root_account.feature_enabled?(:granular_permissions_manage_users) }
     },
     add_ta_to_course: {
       label: lambda { t("Add TAs to courses") },
@@ -553,7 +656,7 @@ class RoleOverride < ActiveRecord::Base
       ],
       group: "manage_course_ta_enrollments",
       group_label: lambda { t("Users - TAs") },
-      account_allows: lambda { |a| a.root_account.feature_enabled?(:granular_permissions_manage_admin_users) }
+      account_allows: lambda { |a| a.root_account.feature_enabled?(:granular_permissions_manage_users) }
     },
     remove_ta_from_course: {
       label: lambda { t("Remove TAs from courses") },
@@ -571,7 +674,7 @@ class RoleOverride < ActiveRecord::Base
       ],
       group: "manage_course_ta_enrollments",
       group_label: lambda { t("Users - TAs") },
-      account_allows: lambda { |a| a.root_account.feature_enabled?(:granular_permissions_manage_admin_users) }
+      account_allows: lambda { |a| a.root_account.feature_enabled?(:granular_permissions_manage_users) }
     },
     add_observer_to_course: {
       label: lambda { t("Add Observers to courses") },
@@ -584,12 +687,14 @@ class RoleOverride < ActiveRecord::Base
         "AccountMembership"
       ],
       true_for: [
+        "TaEnrollment",
+        "DesignerEnrollment",
         "TeacherEnrollment",
         "AccountAdmin"
       ],
       group: "manage_course_observer_enrollments",
       group_label: lambda { t("Users - Observers") },
-      account_allows: lambda { |a| a.root_account.feature_enabled?(:granular_permissions_manage_admin_users) }
+      account_allows: lambda { |a| a.root_account.feature_enabled?(:granular_permissions_manage_users) }
     },
     remove_observer_from_course: {
       label: lambda { t("Remove Observers from courses") },
@@ -602,12 +707,14 @@ class RoleOverride < ActiveRecord::Base
         "AccountMembership"
       ],
       true_for: [
+        "TaEnrollment",
+        "DesignerEnrollment",
         "TeacherEnrollment",
         "AccountAdmin"
       ],
       group: "manage_course_observer_enrollments",
       group_label: lambda { t("Users - Observers") },
-      account_allows: lambda { |a| a.root_account.feature_enabled?(:granular_permissions_manage_admin_users) }
+      account_allows: lambda { |a| a.root_account.feature_enabled?(:granular_permissions_manage_users) }
     },
     add_designer_to_course: {
       label: lambda { t("Add Designers to courses") },
@@ -625,7 +732,7 @@ class RoleOverride < ActiveRecord::Base
       ],
       group: "manage_course_designer_enrollments",
       group_label: lambda { t("Users - Designers") },
-      account_allows: lambda { |a| a.root_account.feature_enabled?(:granular_permissions_manage_admin_users) }
+      account_allows: lambda { |a| a.root_account.feature_enabled?(:granular_permissions_manage_users) }
     },
     remove_designer_from_course: {
       label: lambda { t("Remove Designers from courses") },
@@ -643,28 +750,28 @@ class RoleOverride < ActiveRecord::Base
       ],
       group: "manage_course_designer_enrollments",
       group_label: lambda { t("Users - Designers") },
-      account_allows: lambda { |a| a.root_account.feature_enabled?(:granular_permissions_manage_admin_users) }
+      account_allows: lambda { |a| a.root_account.feature_enabled?(:granular_permissions_manage_users) }
     },
 
-     :manage_assignments => {
-       :label => lambda { t('permissions.manage_assignments', "Manage (add / edit / delete) assignments and quizzes") },
-       :label_v2 => lambda { t("Assignments and Quizzes - add / edit / delete") },
-       :available_to => [
-         'TaEnrollment',
-         'DesignerEnrollment',
-         'TeacherEnrollment',
-         'TeacherlessStudentEnrollment',
-         'ObserverEnrollment',
-         'AccountAdmin',
-         'AccountMembership'
-       ],
-       :true_for => [
-         'TaEnrollment',
-         'DesignerEnrollment',
-         'TeacherEnrollment',
-         'AccountAdmin'
-       ],
-       :acts_as_access_token_scope => true
+    :manage_assignments => {
+      :label => lambda { t('permissions.manage_assignments', "Manage (add / edit / delete) assignments and quizzes") },
+      :label_v2 => lambda { t("Assignments and Quizzes - add / edit / delete") },
+      :available_to => [
+        'TaEnrollment',
+        'DesignerEnrollment',
+        'TeacherEnrollment',
+        'TeacherlessStudentEnrollment',
+        'ObserverEnrollment',
+        'AccountAdmin',
+        'AccountMembership'
+      ],
+      :true_for => [
+        'TaEnrollment',
+        'DesignerEnrollment',
+        'TeacherEnrollment',
+        'AccountAdmin'
+      ],
+      :acts_as_access_token_scope => true
     },
     :manage_calendar => {
       :label => lambda { t('permissions.manage_calendar', "Add, edit and delete events on the course calendar") },
@@ -704,6 +811,52 @@ class RoleOverride < ActiveRecord::Base
         'DesignerEnrollment',
         'AccountAdmin'
       ]
+    },
+    # Course Template account permissions
+    add_course_template: {
+      label: lambda { t("Create Course Templates") },
+      label_v2: lambda { t("Create Course Templates") },
+      available_to: [
+        "AccountAdmin",
+        "AccountMembership"
+      ],
+      true_for: [
+        "AccountAdmin"
+      ],
+      group: "manage_course_templates",
+      group_label: -> { t("Courses - Course Templates") },
+      account_allows: ->(a) { a.root_account.feature_enabled?(:course_templates) },
+      account_only: true
+    },
+    edit_course_template: {
+      label: lambda { t("Edit Course Templates") },
+      label_v2: lambda { t("Edit Course Templates") },
+      available_to: [
+        "AccountAdmin",
+        "AccountMembership"
+      ],
+      true_for: [
+        "AccountAdmin"
+      ],
+      group: "manage_course_templates",
+      group_label: -> { t("Courses - Course Templates") },
+      account_allows: ->(a) { a.root_account.feature_enabled?(:course_templates) },
+      account_only: true
+    },
+    delete_course_template: {
+      label: lambda { t("Delete Course Templates") },
+      label_v2: lambda { t("Delete Course Templates") },
+      available_to: [
+        "AccountAdmin",
+        "AccountMembership"
+      ],
+      true_for: [
+        "AccountAdmin"
+      ],
+      group: "manage_course_templates",
+      group_label: -> { t("Courses - Course Templates") },
+      account_allows: ->(a) { a.root_account.feature_enabled?(:course_templates) },
+      account_only: true
     },
     # legacy :manage_files permission bundle
     manage_files: {
@@ -914,22 +1067,74 @@ class RoleOverride < ActiveRecord::Base
       true_for: %w[AccountAdmin TeacherEnrollment DesignerEnrollment]
     },
     :manage_students => {
-         :label => lambda { t('permissions.manage_students', "Add/remove students for the course") },
-         :label_v2 => lambda { t("Users - add / remove students in courses") },
-         :available_to => [
-           'TaEnrollment',
-           'DesignerEnrollment',
-           'TeacherEnrollment',
-           'TeacherlessStudentEnrollment',
-           'AccountAdmin',
-           'AccountMembership'
-         ],
-         :true_for => [
-           'TaEnrollment',
-           'DesignerEnrollment',
-           'TeacherEnrollment',
-           'AccountAdmin'
-         ]
+      :label => lambda {
+        if Account.site_admin.feature_enabled?(:granular_permissions_manage_users)
+          t("Manage students for the course")
+        else
+          t('permissions.manage_students', "Add/remove students for the course")
+        end
+      },
+      :label_v2 => lambda {
+        if Account.site_admin.feature_enabled?(:granular_permissions_manage_users)
+          t("Users - manage students in courses")
+        else
+          t("Users - add / remove students in courses")
+        end
+      },
+      :available_to => [
+        'TaEnrollment',
+        'DesignerEnrollment',
+        'TeacherEnrollment',
+        'TeacherlessStudentEnrollment',
+        'AccountAdmin',
+        'AccountMembership'
+      ],
+      :true_for => [
+        'TaEnrollment',
+        'DesignerEnrollment',
+        'TeacherEnrollment',
+        'AccountAdmin'
+      ]
+    },
+    add_student_to_course: {
+      label: lambda { t("Add Students to courses") },
+      label_v2: lambda { t("Add Students to courses") },
+      available_to: [
+        "TaEnrollment",
+        "DesignerEnrollment",
+        "TeacherEnrollment",
+        "AccountAdmin",
+        "AccountMembership"
+      ],
+      true_for: [
+        "TaEnrollment",
+        "DesignerEnrollment",
+        "TeacherEnrollment",
+        "AccountAdmin"
+      ],
+      group: "manage_course_student_enrollments",
+      group_label: lambda { t("Users - Students") },
+      account_allows: lambda { |a| a.root_account.feature_enabled?(:granular_permissions_manage_users) }
+    },
+    remove_student_from_course: {
+      label: lambda { t("Remove Students from courses") },
+      label_v2: lambda { t("Remove Students from courses") },
+      available_to: [
+        "TaEnrollment",
+        "DesignerEnrollment",
+        "TeacherEnrollment",
+        "AccountAdmin",
+        "AccountMembership"
+      ],
+      true_for: [
+        "TaEnrollment",
+        "DesignerEnrollment",
+        "TeacherEnrollment",
+        "AccountAdmin"
+      ],
+      group: "manage_course_student_enrollments",
+      group_label: lambda { t("Users - Students") },
+      account_allows: lambda { |a| a.root_account.feature_enabled?(:granular_permissions_manage_users) }
     },
     :manage_user_notes => {
        :label => lambda { t('permissions.manage_user_notes', "Manage faculty journal entries") },

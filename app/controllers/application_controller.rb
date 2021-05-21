@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -156,36 +158,37 @@ class ApplicationController < ActionController::Base
           active_brand_config_json_url: active_brand_config_url('json'),
           url_to_what_gets_loaded_inside_the_tinymce_editor_css: editor_css,
           url_for_high_contrast_tinymce_editor_css: editor_hc_css,
-          current_user_id: @current_user.try(:id),
-          current_user_roles: @current_user.try(:roles, @domain_root_account),
-          current_user_types: @current_user.try{|u| u.account_users.map{|t| t.readable_type }},
-          current_user_disabled_inbox: @current_user.try(:disabled_inbox?),
+          current_user_id: @current_user&.id,
+          current_user_roles: @current_user&.roles(@domain_root_account),
+          current_user_types: @current_user.try{|u| u.account_users.active.map(&:readable_type)},
+          current_user_disabled_inbox: @current_user&.disabled_inbox?,
           files_domain: HostUrl.file_host(@domain_root_account || Account.default, request.host_with_port),
-          DOMAIN_ROOT_ACCOUNT_ID: @domain_root_account.try(:global_id),
+          DOMAIN_ROOT_ACCOUNT_ID: @domain_root_account&.global_id,
           k12: k12?,
           use_responsive_layout: use_responsive_layout?,
           use_rce_enhancements: (@context.is_a?(User) ? @domain_root_account : @context).try(:feature_enabled?, :rce_enhancements),
           rce_auto_save: @context.try(:feature_enabled?, :rce_auto_save),
           help_link_name: help_link_name,
           help_link_icon: help_link_icon,
-          use_high_contrast: @current_user.try(:prefers_high_contrast?),
-          disable_celebrations: @current_user.try(:prefers_no_celebrations?),
-          disable_keyboard_shortcuts: @current_user.try(:prefers_no_keyboard_shortcuts?),
+          use_high_contrast: @current_user&.prefers_high_contrast?,
+          auto_show_cc: @current_user&.auto_show_cc?,
+          disable_celebrations: @current_user&.prefers_no_celebrations?,
+          disable_keyboard_shortcuts: @current_user&.prefers_no_keyboard_shortcuts?,
           LTI_LAUNCH_FRAME_ALLOWANCES: Lti::Launch.iframe_allowances(request.user_agent),
           DEEP_LINKING_POST_MESSAGE_ORIGIN: request.base_url,
           DEEP_LINKING_LOGGING: Setting.get('deep_linking_logging', nil),
           SETTINGS: {
-            open_registration: @domain_root_account.try(:open_registration?),
-            collapse_global_nav: @current_user.try(:collapse_global_nav?),
-            show_feedback_link: show_feedback_link?
+            open_registration: @domain_root_account&.open_registration?,
+            collapse_global_nav: @current_user&.collapse_global_nav?,
+            release_notes_badge_disabled: @current_user&.release_notes_badge_disabled?,
           },
         }
 
-        @js_env[:flashAlertTimeout] = 1.day.in_milliseconds if @current_user.try(:prefers_no_toast_timeout?)
+        @js_env[:flashAlertTimeout] = 1.day.in_milliseconds if @current_user&.prefers_no_toast_timeout?
         @js_env[:KILL_JOY] = @domain_root_account.kill_joy? if @domain_root_account&.kill_joy?
 
         cached_features = cached_js_env_account_features
-        @js_env[:DIRECT_SHARE_ENABLED] = cached_features.delete(:direct_share) && !@context.is_a?(Group) && @current_user&.can_content_share?
+        @js_env[:DIRECT_SHARE_ENABLED] = !@context.is_a?(Group) && @current_user&.can_content_share?
         @js_env[:FEATURES] = cached_features.merge(
           canvas_k6_theme: @context.try(:feature_enabled?, :canvas_k6_theme)
         )
@@ -207,6 +210,8 @@ class ApplicationController < ActionController::Base
         @js_env[:lolcalize] = true if ENV['LOLCALIZE']
         @js_env[:rce_auto_save_max_age_ms] = Setting.get('rce_auto_save_max_age_ms', 1.day.to_i * 1000).to_i if @js_env[:rce_auto_save]
         @js_env[:FEATURES][:new_math_equation_handling] = use_new_math_equation_handling?
+        @js_env[:HOMEROOM_COURSE] = @context.elementary_homeroom_course? if @context.is_a?(Course)
+        @js_env[:K5_MODE] = @context.is_a?(Course) && @context.elementary_subject_course?
       end
     end
 
@@ -219,12 +224,13 @@ class ApplicationController < ActionController::Base
   # put feature checks on Account.site_admin and @domain_root_account that we're loading for every page in here
   # so altogether we can get them faster the vast majority of the time
   JS_ENV_SITE_ADMIN_FEATURES = [
-    :cc_in_rce_video_tray, :featured_help_links, :rce_lti_favorites, :rce_pretty_html_editor, :rce_better_file_downloading
+    :cc_in_rce_video_tray, :featured_help_links, :rce_pretty_html_editor, :rce_better_file_downloading, :rce_better_file_previewing,
+    :strip_origin_from_quiz_answer_file_references, :rce_buttons_and_icons
   ].freeze
   JS_ENV_ROOT_ACCOUNT_FEATURES = [
-    :direct_share, :assignment_bulk_edit, :responsive_awareness, :recent_history,
-    :responsive_misc, :product_tours, :module_dnd, :files_dnd, :unpublished_courses,
-    :usage_rights_discussion_topics, :inline_math_everywhere, :granular_permissions_manage_admin_users
+    :responsive_awareness, :responsive_misc, :product_tours, :module_dnd, :files_dnd, :unpublished_courses,
+    :usage_rights_discussion_topics, :inline_math_everywhere, :granular_permissions_manage_users,
+    :canvas_for_elementary
   ].freeze
   JS_ENV_FEATURES_HASH = Digest::MD5.hexdigest([JS_ENV_SITE_ADMIN_FEATURES + JS_ENV_ROOT_ACCOUNT_FEATURES].sort.join(",")).freeze
   def cached_js_env_account_features
@@ -416,7 +422,7 @@ class ApplicationController < ActionController::Base
         subAccounts: @context.account.sub_accounts.pluck(:id, :name).map{|id, name| {id: id, name: name}},
         terms: @context.account.root_account.enrollment_terms.active.to_a.map{|term| {id: term.id, name: term.name}},
         canManageCourse: can_manage,
-        canAutoPublishCourses: can_manage && @domain_root_account.feature_enabled?(:uxs_4_omg_a_scary_blueprint_checkbox)
+        canAutoPublishCourses: can_manage
       )
     end
     js_env :BLUEPRINT_COURSES_DATA => bc_data
@@ -523,6 +529,16 @@ class ApplicationController < ActionController::Base
     prepend_view_path(path)
   end
 
+  # the way classic quizzes copies question data from the page into the
+  # edit form causes the elements added for a11y to get duplicated
+  # and other misadventures that caused 4 hotfixes in 3 days.
+  # Let's just not use the new math handling there.
+  def use_new_math_equation_handling?
+    @domain_root_account&.feature_enabled?(:new_math_equation_handling) &&
+    !(params[:controller] == "quizzes/quizzes" && params[:action] == "edit") &&
+    params[:controller] != "question_banks"
+  end
+
   protected
 
   # we track the cost of each request in RequestThrottle in order
@@ -607,7 +623,7 @@ class ApplicationController < ActionController::Base
     Canvas::Apm.annotate_trace(
       Shard.current,
       @domain_root_account,
-      RequestContextGenerator.request_id,
+      RequestContext::Generator.request_id,
       @current_user
     )
   end
@@ -661,7 +677,7 @@ class ApplicationController < ActionController::Base
       headers['X-Frame-Options'] = 'SAMEORIGIN'
     end
     headers['Strict-Transport-Security'] = 'max-age=31536000' if request.ssl?
-    RequestContextGenerator.store_request_meta(request, @context)
+    RequestContext::Generator.store_request_meta(request, @context)
     true
   end
 
@@ -685,7 +701,7 @@ class ApplicationController < ActionController::Base
   def tab_enabled?(id, opts = {})
     return true unless @context&.respond_to?(:tabs_available)
 
-    valid = Rails.cache.fetch(['tab_enabled3', id, @context, @current_user, @domain_root_account, session[:enrollment_uuid]].cache_key) do
+    valid = Rails.cache.fetch(['tab_enabled4', id, @context, @current_user, @domain_root_account, session[:enrollment_uuid]].cache_key) do
       @context.tabs_available(@current_user,
         session: session,
         include_hidden_unused: true,
@@ -890,7 +906,7 @@ class ApplicationController < ActionController::Base
   # to.  So /courses/5/assignments would have a @context=Course.find(5).
   # Also assigns @context_membership to the membership type of @current_user
   # if @current_user is a member of the context.
-  def get_context
+  def get_context(include_deleted: false)
     GuardRail.activate(:secondary) do
       unless @context
         if params[:course_id]
@@ -918,7 +934,8 @@ class ApplicationController < ActionController::Base
           @context_enrollment = @context.group_memberships.where(user_id: @current_user).first if @context && @current_user
           @context_membership = @context_enrollment
         elsif params[:user_id] || (self.is_a?(UsersController) && params[:user_id] = params[:id])
-          @context = api_find(User, params[:user_id])
+          scope = include_deleted ? User : User.active
+          @context = api_find(scope, params[:user_id])
           params[:context_id] = params[:user_id]
           params[:context_type] = "User"
           @context_membership = @context if @context == @current_user
@@ -1429,11 +1446,11 @@ class ApplicationController < ActionController::Base
     return unless (request.xhr? || request.put?) && params[:page_view_token] && !updated_fields.empty?
     return unless page_views_enabled?
 
-    RequestContextGenerator.store_interaction_seconds_update(
+    RequestContext::Generator.store_interaction_seconds_update(
       params[:page_view_token],
       updated_fields[:interaction_seconds]
     )
-    page_view_info = PageView.decode_token(params[:page_view_token])
+    page_view_info = CanvasSecurity::PageViewJwt.decode(params[:page_view_token])
     @page_view = PageView.find_for_update(page_view_info[:request_id])
     if @page_view
       if @page_view.id
@@ -1480,7 +1497,7 @@ class ApplicationController < ActionController::Base
       @page_view.account_id = @domain_root_account.id
       @page_view.developer_key_id = @access_token.try(:developer_key_id)
       @page_view.store
-      RequestContextGenerator.store_page_view_meta(@page_view)
+      RequestContext::Generator.store_page_view_meta(@page_view)
     end
   end
 
@@ -1513,7 +1530,7 @@ class ApplicationController < ActionController::Base
     # This causes controller#action from not being set on x-canvas-meta header.
     set_response_headers
 
-    if config.consider_all_requests_local
+    if Rails.application.config.consider_all_requests_local
       rescue_action_locally(exception, level: level)
     else
       rescue_action_in_public(exception, level: level)
@@ -1673,7 +1690,7 @@ class ApplicationController < ActionController::Base
     else
       # this ensures the logging will still happen so you can see backtrace, etc.
       Canvas::Errors.capture(exception, {}, level)
-      super
+      raise exception
     end
   end
 
@@ -1893,7 +1910,7 @@ class ApplicationController < ActionController::Base
     # but we still use the assignment#new page to create the quiz.
     # also handles launch from existing quiz on quizzes page.
     if ref.present? && @assignment&.quiz_lti?
-      if (ref.include?('assignments/new') || ref =~ /courses\/\d+\/quizzes/i) && @context.root_account.feature_enabled?(:newquizzes_on_quiz_page)
+      if (ref.include?('assignments/new') || ref =~ /courses\/(\d+\/quizzes.?|.*\?quiz_lti)/) && @context.root_account.feature_enabled?(:newquizzes_on_quiz_page)
         return polymorphic_url([@context, :quizzes])
       end
 
@@ -1903,6 +1920,18 @@ class ApplicationController < ActionController::Base
 
       if ref =~ /courses\/\d+$/i
         return polymorphic_url([@context])
+      end
+
+      if ref =~ /courses\/(\d+\/modules.?|.*\?module_item_id=)/
+        return polymorphic_url([@context, :context_modules])
+      end
+
+      if ref =~ /\/courses\/.*\?quiz_lti/
+        return polymorphic_url([@context, :quizzes])
+      end
+
+      if ref =~ /courses\/\d+\/assignments/
+        return polymorphic_url([@context, :assignments])
       end
     end
     named_context_url(@context, :context_external_content_success_url, 'external_tool_redirect', include_host: true)
@@ -2080,12 +2109,12 @@ class ApplicationController < ActionController::Base
     end
   end
 
-  def require_account_management(on_root_account = false)
+  def require_account_management(on_root_account = false, permissions: [:manage_account_settings])
     if (!@context.root_account? && on_root_account) || !@context.is_a?(Account)
       redirect_to named_context_url(@context, :context_url)
       return false
     else
-      return false unless authorized_action(@context, @current_user, :manage_account_settings)
+      return false unless authorized_action(@context, @current_user, permissions)
     end
     true
   end
@@ -2191,11 +2220,6 @@ class ApplicationController < ActionController::Base
     bank
   end
 
-  def prepend_json_csrf?
-    requested_json = request.headers['Accept'] =~ %r{application/json}
-    request.get? && !requested_json && in_app?
-  end
-
   def in_app?
     !!(@current_user ? @pseudonym_session : session[:session_id])
   end
@@ -2212,15 +2236,6 @@ class ApplicationController < ActionController::Base
       return false
     end
     true
-  end
-
-  # the way classic quizzes copies question data from the page into the
-  # edit form causes the elements added for a11y to get duplicated
-  # and other misadventures that caused 4 hotfixes in 3 days.
-  # Let's just not use the new math handling there.
-  def use_new_math_equation_handling?
-    Account.site_admin.feature_enabled?(:new_math_equation_handling) &&
-    !(params[:controller] == "quizzes/quizzes" && params[:action] == "edit")
   end
 
   def destroy_session
@@ -2256,12 +2271,6 @@ class ApplicationController < ActionController::Base
       json = options.delete(:json)
       unless json.is_a?(String)
         json = ActiveSupport::JSON.encode(json_cast(json))
-      end
-
-      # prepend our CSRF protection to the JSON response, unless this is an API
-      # call that didn't use session auth, or a non-GET request.
-      if prepend_json_csrf?
-        json = "while(1);#{json}"
       end
 
       # fix for some browsers not properly handling json responses to multipart
@@ -2311,7 +2320,7 @@ class ApplicationController < ActionController::Base
   # ensure that the bundle you are requiring isn't simply a dependency of some
   # other bundle.
   #
-  # Bundles are defined in app/coffeescripts/bundles/<bundle>.coffee
+  # Bundles are defined in ui/bundles/<bundle>.coffee
   #
   # usage: js_bundle :gradebook
   #
@@ -2782,7 +2791,7 @@ class ApplicationController < ActionController::Base
   }.freeze
 
   def show_student_view_button?
-    return false unless @context&.is_a?(Course) && @context&.feature_enabled?(:easy_student_view) && can_do(@context, @current_user, :use_student_view)
+    return false unless @context&.is_a?(Course) && can_do(@context, @current_user, :use_student_view)
 
     controller_action = "#{params[:controller]}##{params[:action]}"
     STUDENT_VIEW_PAGES.key?(controller_action) && (STUDENT_VIEW_PAGES[controller_action].nil? || !@context.tab_hidden?(STUDENT_VIEW_PAGES[controller_action]))

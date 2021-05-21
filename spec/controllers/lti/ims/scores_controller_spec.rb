@@ -213,6 +213,25 @@ module Lti::Ims
             end
 
             it_behaves_like 'updates existing submission'
+
+            context 'when submitted_at is the same across submissions' do
+              let(:params_overrides) do
+                super().merge(
+                  Lti::Result::AGS_EXT_SUBMISSION => {
+                    new_submission: false, submitted_at: '2021-05-04T18:54:34.736+00:00'
+                  }
+                )
+              end
+
+              it 'does not decrement attempt' do
+                # starting at attempt 0 doesn't work since it always goes back to 1 on save
+                result.submission.update!(attempt: 4)
+                send_request
+                attempt = result.submission.reload.attempt
+                send_request
+                expect(result.submission.reload.attempt).to eq attempt
+              end
+            end
           end
 
           context 'when "new_submission" extension is present and true' do
@@ -368,6 +387,9 @@ module Lti::Ims
             let(:params_overrides) do
               super().merge(Lti::Result::AGS_EXT_SUBMISSION => { content_items: content_items })
             end
+            let(:expected_progress_url) do
+              "http://test.host/api/lti/courses/#{context_id}/progress/"
+            end
 
             it 'ignores content items that are not type file' do
               send_request
@@ -377,6 +399,15 @@ module Lti::Ims
             it 'uses submission_type online_upload' do
               send_request
               expect(result.submission.reload.submission_type).to eq 'online_upload'
+            end
+
+            it 'only submits assignment once' do
+              send_request
+              attempt = result.submission.reload.attempt + 1
+              send_request
+              expect(result.submission.reload.attempt).to eq attempt
+              run_jobs # process the file upload
+              expect(result.submission.reload.attempt).to eq attempt
             end
 
             shared_examples_for 'a file submission' do
@@ -391,7 +422,7 @@ module Lti::Ims
                 send_request
                 progress_url =
                   json[Lti::Result::AGS_EXT_SUBMISSION]['content_items'].first['progress']
-                expect(progress_url).to include 'http://test.host/api/v1/progress/'
+                expect(progress_url).to include expected_progress_url
               end
             end
 
@@ -429,7 +460,7 @@ module Lti::Ims
                 send_request
                 progress_url =
                   json[Lti::Result::AGS_EXT_SUBMISSION]['content_items'].first['progress']
-                expect(progress_url).to include 'http://test.host/api/v1/progress/'
+                expect(progress_url).to include expected_progress_url
               end
 
               shared_examples_for 'a 400' do
@@ -492,6 +523,30 @@ module Lti::Ims
 
         context 'with a ZERO score maximum' do
           let(:params_overrides) { super().merge(scoreGiven: 0, scoreMaximum: 0) }
+
+          context "when the line item's maximum is zero" do
+            it 'will tolerate a zero score' do
+              line_item.update score_maximum: 0
+              result
+              send_request
+              expect(response.status.to_i).to eq(200)
+              expect(result.reload.result_score).to eq(0)
+            end
+          end
+
+          context "when the line item's maximum is not zero" do
+            it 'will not tolerate a zero score' do
+              line_item.update score_maximum: 10
+              result
+              send_request
+              expect(response.status.to_i).to eq(422)
+              expect(response.body).to include("cannot be zero if line item's maximum is not zero")
+            end
+          end
+        end
+
+        context "with a NEGATIVE score maximum" do
+          let(:params_overrides) { super().merge(scoreGiven: 0, scoreMaximum: -1) }
 
           it 'will not tolerate invalid score max' do
             result
@@ -620,6 +675,35 @@ module Lti::Ims
             )
           end
           it_behaves_like 'an unprocessable entity'
+        end
+
+        context 'when model validation fails (score_maximum is not a number)' do
+          let(:params_overrides) do
+            super().merge(scoreGiven: 12.3456, scoreMaximum: 45.678)
+          end
+
+          before do
+            allow_any_instance_of(Lti::Result).to receive(:update!).and_raise(
+              ActiveRecord::RecordInvalid, Lti::Result.new.tap do |rf|
+                rf.errors.add(:score_maximum, 'bogus error')
+              end
+            )
+          end
+
+          it_behaves_like 'an unprocessable entity'
+
+          it 'does not update the submission' do
+            expect {
+              result
+              send_request
+            }.to_not change { result.submission.reload.score }
+          end
+
+          it 'has the model validation error in the response' do
+            result
+            send_request
+            expect(response.body).to include('bogus error')
+          end
         end
 
         context 'when user_id not found in course' do

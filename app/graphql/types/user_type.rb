@@ -288,6 +288,19 @@ module Types
         end
       end
     end
+
+    field :comment_bank_items_connection, Types::CommentBankItemType.connection_type, null: true do
+      argument :query, String, <<~DOC, required: false
+        Only include comments that match the query string.
+      DOC
+    end
+    def comment_bank_items_connection(query: nil)
+      return unless object == current_user
+
+      comments = current_user.comment_bank_items
+      comments = comments.where(ActiveRecord::Base.wildcard("comment", query.strip)) if query&.strip.present?
+      comments
+    end
   end
 end
 
@@ -295,8 +308,8 @@ module Loaders
   class UserCourseEnrollmentLoader < Loaders::ForeignKeyLoader
     def initialize(course_ids:)
       scope = Enrollment.joins(:course).
-        where.not(enrollments: {workflow_state: "deleted"},
-                  courses: {workflow_state: "deleted"})
+        where.not(enrollments: {workflow_state: "deleted"}).
+        where.not(courses: {workflow_state: "deleted"})
 
       scope = scope.where(course_id: course_ids) if course_ids.present?
 

@@ -23,7 +23,7 @@ module AcademicBenchmarks
       delegate :description, to: :statement
 
       def resolve_number
-        @resolve_number ||= (number&.enhanced || number&.raw)
+        number&.prefix_enhanced
       end
 
       def build_outcomes(ratings={}, parent=nil)
@@ -35,7 +35,9 @@ module AcademicBenchmarks
           is_global_standard: true,
           description: description
         }
-        if has_children?
+        # .all? returns true for [], so check has_children? too
+        all_clarification = has_children? && children.all?(&:clarification?)
+        if has_children? && !all_clarification
           # create outcome group
           hash[:type] = 'learning_outcome_group'
           hash[:title] = build_title
@@ -44,32 +46,19 @@ module AcademicBenchmarks
           # create outcome
           hash[:type] = 'learning_outcome'
           hash[:title] = build_num_title
+          # include clarifications with parent standard
+          hash[:description] = [description, *children.map(&:description)].join(' ') if all_clarification
           set_default_ratings(hash, ratings)
         end
         hash
       end
 
-      # standards don't have titles so they are built from parent standards/groups
-      # it is generated like this:
-      # if I have a number, use it and all parent nums on standards
-      # if I don't have a number, use my description (potentially truncated at 50)
       def build_num_title
-        if parent.is_a?(Standard) && parent.resolve_number.present?
-          base = parent.build_num_title
-          if base && resolve_number
-            resolve_number.include?(base) ? resolve_number : [base, resolve_number].join(".")
-          else
-            base || resolve_number
-          end
-        elsif resolve_number.present?
-          resolve_number
-        else
-          cropped_description
-        end
+        resolve_number.presence || cropped_description
       end
 
       def build_title
-        if resolve_number
+        if resolve_number.present?
           [build_num_title, cropped_description].join(" - ")
         else
           cropped_description
@@ -101,6 +90,10 @@ module AcademicBenchmarks
         # get the first 50 chars of description in a utf-8 friendly way
         d = text
         d && d[/.{0,50}/u]
+      end
+
+      def clarification?
+        'clarification'.in?(utilizations.map(&:type))
       end
 
       private

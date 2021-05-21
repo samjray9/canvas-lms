@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -35,6 +37,7 @@ class ExternalToolsController < ApplicationController
   include Api::V1::ExternalTools
   include Lti::RedisMessageClient
   include Lti::Concerns::SessionlessLaunches
+  include K5Mode
 
   WHITELISTED_QUERY_PARAMS = [
     :platform
@@ -506,16 +509,25 @@ class ExternalToolsController < ApplicationController
   end
   protected :lti_launch
 
-  # Get resource link from `resource_link_lookup_id` query param, and
-  # ensure the tool matches the resource link.
+  # As `resource_link_lookup_id` was renamed to `resource_link_lookup_uuid` we
+  # have to support both names because, there are cases like RCE editor, that a
+  # resource link was previously-created and the genererated links couldn't stop
+  # working.
+  def resource_link_lookup_uuid
+    params[:resource_link_lookup_id] || params[:resource_link_lookup_uuid]
+  end
+  protected :resource_link_lookup_uuid
+
+  # Get resource link from `resource_link_lookup_id` or `resource_link_lookup_uuid`
+  # query param, and ensure the tool matches the resource link.
   # Used for link-level custom params, but may in the future be used to
   # determine resource_link_id to send to tool.
   def lookup_resource_link(tool)
-    return nil unless params[:resource_link_lookup_id]
+    return nil unless resource_link_lookup_uuid
     return nil unless params[:url]
 
     resource_link = Lti::ResourceLink.where(
-      lookup_id: params[:resource_link_lookup_id],
+      lookup_uuid: resource_link_lookup_uuid,
       context: @context,
       root_account_id: tool.root_account_id
     ).active.take.tap do |resource_link|
@@ -1134,6 +1146,30 @@ class ExternalToolsController < ApplicationController
         @context.save!
       end
       render json: {rce_favorite_tool_ids: favorite_ids.map{|id| Shard.relative_id_for(id, Shard.current, Shard.current)}}
+    end
+  end
+
+  # @API Get visible course navigation tools
+  # Get a list of external tools with the course_navigation placement that have not been hidden in
+  # course settings and whose visibility settings apply to the requesting user. These tools are the
+  # same that appear in the course navigation.
+  #
+  # @example_request
+  #
+  #   curl 'https://<canvas>/api/v1/courses/<course_id>/external_tools/visible_course_nav_tools' \
+  #        -H "Authorization: Bearer <token>"
+  def visible_course_nav_tools
+    if authorized_action(@context, @current_user, :read)
+      if @context.is_a?(Course)
+        tabs = @context.tabs_available(@current_user, course_subject_tabs: true)
+        tool_ids = []
+        tabs.select{ |t| t[:external] }.each do |t|
+          tool_ids << t[:args][1] if t[:args] && t[:args][1]
+        end
+        @tools = ContextExternalTool.where(:id => tool_ids)
+        @tools = tool_ids.map{ |id| @tools.find{ |t| t[:id] == id }}.compact
+        render :json => external_tools_json(@tools, @context, @current_user, session)
+      end
     end
   end
 

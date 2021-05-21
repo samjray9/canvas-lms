@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require 'rake/task_graph'
 require 'parallel'
 
@@ -106,7 +108,7 @@ namespace :canvas do
         if Hash === subtree
           load_tree(key, subtree)
         else
-          Imperium::KV.put(key, subtree, cas: 0)
+          Diplomat::Kv.put(key, subtree.to_s, { cas: 0 })
         end
       end
     end
@@ -144,11 +146,7 @@ namespace :db do
   desc "Shows pending db migrations."
   task :pending_migrations => :environment do
     migrations = ActiveRecord::Base.connection.migration_context.migrations
-    if CANVAS_RAILS5_2
-      pending_migrations = ActiveRecord::Migrator.new(:up, migrations).pending_migrations
-    else
-      pending_migrations = ActiveRecord::Migrator.new(:up, migrations, ActiveRecord::Base.connection.schema_migration).pending_migrations
-    end
+    pending_migrations = ActiveRecord::Migrator.new(:up, migrations, ActiveRecord::Base.connection.schema_migration).pending_migrations
     pending_migrations.each do |pending_migration|
       tags = pending_migration.tags
       tags = " (#{tags.join(', ')})" unless tags.empty?
@@ -159,11 +157,7 @@ namespace :db do
   desc "Shows skipped db migrations."
   task :skipped_migrations => :environment do
     migrations = ActiveRecord::Base.connection.migration_context.migrations
-    if CANVAS_RAILS5_2
-      skipped_migrations = ActiveRecord::Migrator.new(:up, migrations).skipped_migrations
-    else
-      skipped_migrations = ActiveRecord::Migrator.new(:up, migrations, ActiveRecord::Base.connection.schema_migration).skipped_migrations
-    end
+    skipped_migrations = ActiveRecord::Migrator.new(:up, migrations, ActiveRecord::Base.connection.schema_migration).skipped_migrations
     skipped_migrations.each do |skipped_migration|
       tags = skipped_migration.tags
       tags = " (#{tags.join(', ')})" unless tags.empty?
@@ -173,14 +167,14 @@ namespace :db do
 
   namespace :migrate do
     desc "Run all pending predeploy migrations"
+    # TODO: this is being replaced by outrigger
+    # rake db:migrate:tagged[predeploy].
+    # When all callsites are migrated, this task
+    # definition can be dropped.
     task :predeploy => [:environment, :load_config] do
       migrations = ActiveRecord::Base.connection.migration_context.migrations
       migrations = migrations.select { |m| m.tags.include?(:predeploy) }
-      if CANVAS_RAILS5_2
-        ActiveRecord::Migrator.new(:up, migrations).migrate
-      else
-        ActiveRecord::Migrator.new(:up, migrations, ActiveRecord::Base.connection.schema_migration).migrate
-      end
+      ActiveRecord::Migrator.new(:up, migrations, ActiveRecord::Base.connection.schema_migration).migrate
     end
   end
 
@@ -192,8 +186,8 @@ namespace :db do
       queue = config['queue']
       ActiveRecord::Tasks::DatabaseTasks.drop(queue) if queue rescue nil
       ActiveRecord::Tasks::DatabaseTasks.drop(config) rescue nil
-      Canvas::Cassandra::DatabaseBuilder.config_names.each do |cass_config|
-        db = Canvas::Cassandra::DatabaseBuilder.from_config(cass_config)
+      CanvasCassandra::DatabaseBuilder.config_names.each do |cass_config|
+        db = CanvasCassandra::DatabaseBuilder.from_config(cass_config)
         db.tables.each do |table|
           db.execute("DROP TABLE #{table}")
         end
@@ -223,7 +217,7 @@ Switchman::Rake.filter_database_servers do |servers, block|
   block.call(servers)
 end
 
-%w{db:pending_migrations db:skipped_migrations db:migrate:predeploy}.each do |task_name|
+%w{db:pending_migrations db:skipped_migrations db:migrate:predeploy db:migrate:tagged}.each do |task_name|
   Switchman::Rake.shardify_task(task_name, categories: ->{ Shard.categories })
 end
 

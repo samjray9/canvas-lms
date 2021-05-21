@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 #
 # Copyright (C) 2011 - present Instructure, Inc.
 #
@@ -24,6 +26,8 @@ class ContextController < ApplicationController
   before_action :require_user, :only => [:inbox, :report_avatar_image]
   before_action :reject_student_view_student, :only => [:inbox]
   protect_from_forgery :except => [:object_snippet], with: :exception
+
+  include K5Mode
 
   def create_media_object
     @context = Context.find_by_asset_string(params[:context_code])
@@ -133,20 +137,21 @@ class ContextController < ApplicationController
       all_roles = Role.role_data(@context, @current_user)
       load_all_contexts(:context => @context)
       manage_students = @context.grants_right?(@current_user, session, :manage_students) && !MasterCourses::MasterTemplate.is_master_course?(@context)
-      manage_admins = if @context.root_account.feature_enabled?(:granular_permissions_manage_admin_users)
+      manage_admins = if @context.root_account.feature_enabled?(:granular_permissions_manage_users)
         @context.grants_right?(@current_user, session, :allow_course_admin_actions)
       else
         @context.grants_right?(@current_user, session, :manage_admin_users)
       end
+      can_add_enrollments = @context.grants_any_right?(@current_user, session, *add_enrollment_permissions(@context))
       js_permissions = {
         read_sis: @context.grants_any_right?(@current_user, session, :read_sis, :manage_sis),
         view_user_logins: @context.grants_right?(@current_user, session, :view_user_logins),
         manage_students: manage_students,
-        add_users: manage_students || manage_admins,
+        add_users_to_course: can_add_enrollments,
         read_reports: @context.grants_right?(@current_user, session, :read_reports)
       }
-      if @context.root_account.feature_enabled?(:granular_permissions_manage_admin_users)
-        js_permissions[:allow_course_admin_actions] = manage_admins
+      if @context.root_account.feature_enabled?(:granular_permissions_manage_users)
+        js_permissions[:can_allow_course_admin_actions] = manage_admins
       else
         js_permissions[:manage_admin_users] = manage_admins
       end
@@ -154,8 +159,6 @@ class ContextController < ApplicationController
         ALL_ROLES: all_roles,
         SECTIONS: sections.map { |s| { id: s.id.to_s, name: s.name} },
         CONCLUDED_SECTIONS: concluded_sections,
-        USER_LISTS_URL: polymorphic_path([@context, :user_lists], format: :json),
-        ENROLL_USERS_URL: course_enroll_users_url(@context),
         SEARCH_URL: search_recipients_url,
         COURSE_ROOT_URL: "/courses/#{@context.id}",
         CONTEXTS: @contexts,
@@ -174,13 +177,13 @@ class ContextController < ApplicationController
       })
       set_tutorial_js_env
 
-      if manage_students || manage_admins
-        js_env :ROOT_ACCOUNT_NAME => @domain_root_account.name
+      if can_add_enrollments
+        js_env({ROOT_ACCOUNT_NAME: @domain_root_account.name})
         if @context.root_account.open_registration? || @context.root_account.grants_right?(@current_user, session, :manage_user_logins)
-          js_env({:INVITE_USERS_URL => course_invite_users_url(@context)})
+          js_env({INVITE_USERS_URL: course_invite_users_url(@context)})
         end
       end
-      if @context.grants_right? @current_user, session, :read_as_admin
+      if @context.grants_right?(@current_user, session, :read_as_admin)
         set_student_context_cards_js_env
       end
     elsif @context.is_a?(Group)
@@ -200,7 +203,7 @@ class ContextController < ApplicationController
   end
 
   def prior_users
-    manage_admins = @context.root_account.feature_enabled?(:granular_permissions_manage_admin_users) ?
+    manage_admins = @context.root_account.feature_enabled?(:granular_permissions_manage_users) ?
       :allow_course_admin_actions :
       :manage_admin_users
     if authorized_action(@context, @current_user, [:manage_students, manage_admins, :read_prior_roster])
@@ -309,7 +312,7 @@ class ContextController < ApplicationController
 
       js_env(CONTEXT_USER_DISPLAY_NAME: @user.short_name)
 
-      js_bundle :user_name, "legacy/context_roster_user"
+      js_bundle :user_name, "context_roster_user"
       css_bundle :roster_user, :pairing_code
       @google_analytics_page_title = "#{@context.name} People"
 
@@ -393,6 +396,23 @@ class ContextController < ApplicationController
       @item = scope.association(type).reader.find(id)
       @item.restore
       render :json => @item
+    end
+  end
+
+  def add_enrollment_permissions(context)
+    if context.root_account.feature_enabled?(:granular_permissions_manage_users)
+      [
+        :add_teacher_to_course,
+        :add_ta_to_course,
+        :add_designer_to_course,
+        :add_student_to_course,
+        :add_observer_to_course,
+      ]
+    else
+      [
+        :manage_students,
+        :manage_admin_users
+      ]
     end
   end
 end
