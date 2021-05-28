@@ -101,10 +101,12 @@ export const fetchCourseInstructors = courseId =>
     )
   )
 
-export const fetchCourseApps = courseId =>
+export const fetchCourseApps = courseIds =>
   asJson(
     window.fetch(
-      `/api/v1/courses/${courseId}/external_tools/visible_course_nav_tools`,
+      `/api/v1/external_tools/visible_course_nav_tools?${courseIds
+        .map(id => `context_codes[]=course_${id}`)
+        .join('&')}`,
       defaultFetchOptions
     )
   )
@@ -278,6 +280,7 @@ export const parseAnnouncementDetails = (announcement, course) => {
     canEdit: announcement.permissions.update,
     published: course.published,
     announcement: {
+      id: announcement.id,
       title: announcement.title,
       message: announcement.message,
       url: announcement.html_url,
@@ -286,6 +289,22 @@ export const parseAnnouncementDetails = (announcement, course) => {
     }
   }
 }
+
+/* Helper function to take a list of announcements coming back from API
+   and partition them into homeroom and non-homeroom groups */
+export const groupAnnouncementsByHomeroom = (announcements = [], courses = []) =>
+  courses.reduce(
+    (acc, course) => {
+      const announcement = announcements.find(a => a.context_code === `course_${course.id}`)
+      const group = acc[course.isHomeroom]
+      const parsedAnnouncement = course.isHomeroom
+        ? parseAnnouncementDetails(announcement, course)
+        : announcement
+      if (parsedAnnouncement) acc[course.isHomeroom] = [...group, parsedAnnouncement]
+      return acc
+    },
+    {true: [], false: []}
+  )
 
 export const TAB_IDS = {
   HOME: 'tab-home',

@@ -38,9 +38,8 @@ const currentUser = {
 }
 const defaultEnv = {
   current_user: currentUser,
-  K5_MODE: true,
+  K5_USER: true,
   FEATURES: {
-    canvas_for_elementary: true,
     unpublished_courses: true
   },
   PREFERENCES: {
@@ -85,7 +84,8 @@ const defaultProps = {
   }
 }
 const FETCH_IMPORTANT_INFO_URL = encodeURI('/api/v1/courses/30?include[]=syllabus_body')
-const FETCH_APPS_URL = '/api/v1/courses/30/external_tools/visible_course_nav_tools'
+const FETCH_APPS_URL = '/api/v1/external_tools/visible_course_nav_tools?context_codes[]=course_30'
+
 const FETCH_TABS_URL = '/api/v1/courses/30/tabs'
 const GRADING_PERIODS_URL = encodeURI(
   '/api/v1/courses/30?include[]=grading_periods&include[]=current_grading_period_scores&include[]=total_scores'
@@ -93,9 +93,7 @@ const GRADING_PERIODS_URL = encodeURI(
 const ASSIGNMENT_GROUPS_URL = encodeURI(
   '/api/v1/courses/30/assignment_groups?include[]=assignments&include[]=submission&include[]=read_state'
 )
-const ENROLLMENTS_URL = '/api/v1/courses/30/enrollments'
-
-let modulesContainer
+const ENROLLMENTS_URL = '/api/v1/courses/30/enrollments?user_id=1'
 
 beforeAll(() => {
   moxios.install()
@@ -105,29 +103,26 @@ beforeAll(() => {
   fetchMock.get(GRADING_PERIODS_URL, JSON.stringify(MOCK_GRADING_PERIODS_EMPTY))
   fetchMock.get(ASSIGNMENT_GROUPS_URL, JSON.stringify(MOCK_ASSIGNMENT_GROUPS))
   fetchMock.get(ENROLLMENTS_URL, JSON.stringify(MOCK_ENROLLMENTS))
-  if (!modulesContainer) {
-    modulesContainer = document.createElement('div')
-    modulesContainer.id = 'k5-modules-container'
-    modulesContainer.style.display = 'none'
-    modulesContainer.innerHTML = 'Course modules content'
-    document.body.appendChild(modulesContainer)
-  }
 })
 
 afterAll(() => {
   moxios.uninstall()
   fetchMock.restore()
-  if (modulesContainer) {
-    modulesContainer.remove()
-  }
 })
 
 beforeEach(() => {
   global.ENV = defaultEnv
+  const modulesContainer = document.createElement('div')
+  modulesContainer.id = 'k5-modules-container'
+  modulesContainer.style.display = 'none'
+  modulesContainer.innerHTML = 'Course modules content'
+  document.body.appendChild(modulesContainer)
 })
 
 afterEach(() => {
   global.ENV = {}
+  const modulesContainer = document.getElementById('k5-modules-container')
+  modulesContainer.remove()
 })
 
 describe('K-5 Subject Course', () => {
@@ -289,6 +284,13 @@ describe('K-5 Subject Course', () => {
     it('hides modules content if modules tab is not selected', async () => {
       const {getByText} = render(<K5Course {...defaultProps} defaultTab={TAB_IDS.HOME} />)
       expect(getByText('Course modules content')).not.toBeVisible()
+    })
+
+    it('moves the modules div inside the main content div on render', () => {
+      const {getByTestId} = render(<K5Course {...defaultProps} defaultTab={TAB_IDS.HOME} />)
+      const mainContent = getByTestId('main-content')
+      const modules = document.getElementById('k5-modules-container')
+      expect(mainContent.contains(modules)).toBeTruthy()
     })
   })
 

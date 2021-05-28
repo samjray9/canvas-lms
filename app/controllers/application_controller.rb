@@ -177,6 +177,7 @@ class ApplicationController < ActionController::Base
           LTI_LAUNCH_FRAME_ALLOWANCES: Lti::Launch.iframe_allowances(request.user_agent),
           DEEP_LINKING_POST_MESSAGE_ORIGIN: request.base_url,
           DEEP_LINKING_LOGGING: Setting.get('deep_linking_logging', nil),
+          comment_library_suggestions_enabled: @current_user&.comment_library_suggestions_enabled?,
           SETTINGS: {
             open_registration: @domain_root_account&.open_registration?,
             collapse_global_nav: @current_user&.collapse_global_nav?,
@@ -188,7 +189,12 @@ class ApplicationController < ActionController::Base
         @js_env[:KILL_JOY] = @domain_root_account.kill_joy? if @domain_root_account&.kill_joy?
 
         cached_features = cached_js_env_account_features
-        @js_env[:DIRECT_SHARE_ENABLED] = !@context.is_a?(Group) && @current_user&.can_content_share?
+
+        direct_share_enabled = !@context.is_a?(Group) && @current_user&.can_content_share?
+        if @context.is_a?(Course)
+          direct_share_enabled = @context.grants_right?(@current_user, :read_as_admin)
+        end
+        @js_env[:DIRECT_SHARE_ENABLED] = direct_share_enabled
         @js_env[:FEATURES] = cached_features.merge(
           canvas_k6_theme: @context.try(:feature_enabled?, :canvas_k6_theme)
         )
@@ -210,8 +216,9 @@ class ApplicationController < ActionController::Base
         @js_env[:lolcalize] = true if ENV['LOLCALIZE']
         @js_env[:rce_auto_save_max_age_ms] = Setting.get('rce_auto_save_max_age_ms', 1.day.to_i * 1000).to_i if @js_env[:rce_auto_save]
         @js_env[:FEATURES][:new_math_equation_handling] = use_new_math_equation_handling?
-        @js_env[:HOMEROOM_COURSE] = @context.elementary_homeroom_course? if @context.is_a?(Course)
-        @js_env[:K5_MODE] = @context.is_a?(Course) && @context.elementary_subject_course?
+        @js_env[:K5_USER] = k5_user?
+        @js_env[:K5_HOMEROOM_COURSE] = @context.is_a?(Course) && @context.elementary_homeroom_course?
+        @js_env[:K5_SUBJECT_COURSE] = @context.is_a?(Course) && @context.elementary_subject_course?
       end
     end
 
@@ -229,20 +236,26 @@ class ApplicationController < ActionController::Base
   ].freeze
   JS_ENV_ROOT_ACCOUNT_FEATURES = [
     :responsive_awareness, :responsive_misc, :product_tours, :module_dnd, :files_dnd, :unpublished_courses,
-    :usage_rights_discussion_topics, :inline_math_everywhere, :granular_permissions_manage_users,
-    :canvas_for_elementary
+    :usage_rights_discussion_topics, :inline_math_everywhere, :granular_permissions_manage_users
   ].freeze
-  JS_ENV_FEATURES_HASH = Digest::MD5.hexdigest([JS_ENV_SITE_ADMIN_FEATURES + JS_ENV_ROOT_ACCOUNT_FEATURES].sort.join(",")).freeze
+  JS_ENV_BRAND_ACCOUNT_FEATURES = [
+    :embedded_release_notes
+  ].freeze
+  JS_ENV_FEATURES_HASH = Digest::MD5.hexdigest([JS_ENV_SITE_ADMIN_FEATURES + JS_ENV_ROOT_ACCOUNT_FEATURES + JS_ENV_BRAND_ACCOUNT_FEATURES].sort.join(",")).freeze
   def cached_js_env_account_features
-    # can be invalidated by a flag change on either site admin or the domain root account
+    # can be invalidated by a flag change on site admin, the domain root account, or the brand config account
     MultiCache.fetch(["js_env_account_features", JS_ENV_FEATURES_HASH,
-        Account.site_admin.cache_key(:feature_flags), @domain_root_account&.cache_key(:feature_flags)].cache_key) do
+        Account.site_admin.cache_key(:feature_flags), @domain_root_account&.cache_key(:feature_flags),
+        brand_config_account&.cache_key(:feature_flags)].cache_key) do
       results = {}
       JS_ENV_SITE_ADMIN_FEATURES.each do |f|
         results[f] = Account.site_admin.feature_enabled?(f)
       end
       JS_ENV_ROOT_ACCOUNT_FEATURES.each do |f|
         results[f] = !!@domain_root_account&.feature_enabled?(f)
+      end
+      JS_ENV_BRAND_ACCOUNT_FEATURES.each do |f|
+        results[f] = !!brand_config_account&.feature_enabled?(f)
       end
       results
     end
@@ -299,12 +312,10 @@ class ApplicationController < ActionController::Base
   helper_method :conditional_release_js_env
 
   def set_student_context_cards_js_env
-    if @domain_root_account.feature_enabled?(:student_context_cards)
-      js_env(
-        STUDENT_CONTEXT_CARDS_ENABLED: true,
-        student_context_card_tools: external_tools_display_hashes(:student_context_card)
-      )
-    end
+    js_env(
+      STUDENT_CONTEXT_CARDS_ENABLED: true,
+      student_context_card_tools: external_tools_display_hashes(:student_context_card)
+    )
   end
 
   def external_tools_display_hashes(type, context=@context, custom_settings=[], tool_ids: nil)
@@ -2465,6 +2476,9 @@ class ApplicationController < ActionController::Base
     data[:known_user] = viewer.address_book.known_user(profile.user)
     if data[:known_user] && viewer != profile.user
       common_courses = viewer.address_book.common_courses(profile.user)
+      # address book can return a fake record in common courses with course_id
+      # 0 which represents an admin -> user commonality.
+      common_courses.delete(0)
       common_groups = viewer.address_book.common_groups(profile.user)
     else
       common_courses = {}
@@ -2475,8 +2489,8 @@ class ApplicationController < ActionController::Base
   end
 
   def common_contexts(common_courses, common_groups, current_user, session)
-    courses = Course.where(id: common_courses.keys).to_a
-    groups = Group.where(id: common_groups.keys).to_a
+    courses = Course.active.where(id: common_courses.keys).to_a
+    groups = Group.active.where(id: common_groups.keys).to_a
 
     common_courses = courses.map do |course|
       course_json(course, current_user, session, ['html_url'], false).merge({
@@ -2797,4 +2811,29 @@ class ApplicationController < ActionController::Base
     STUDENT_VIEW_PAGES.key?(controller_action) && (STUDENT_VIEW_PAGES[controller_action].nil? || !@context.tab_hidden?(STUDENT_VIEW_PAGES[controller_action]))
   end
   helper_method :show_student_view_button?
+
+  def uncached_k5_user?
+    if @current_user && @domain_root_account
+      # See if the user has associations with any k5-enabled accounts
+      k5_accounts = @domain_root_account.settings[:k5_accounts]
+      return false if k5_accounts.blank?
+
+      @current_user.user_account_associations.where(account_id: k5_accounts).exists?
+    else
+      # Default to classic canvas if the user isn't logged in
+      false
+    end
+  end
+
+  def k5_user?
+    if @current_user
+      # This key is also invalidated when the k5 setting is toggled at the account level or when enrollments change
+      Rails.cache.fetch_with_batched_keys("k5_user", batch_object: @current_user, batched_keys: [:k5_user], expires_in: 1.hour) do
+        uncached_k5_user?
+      end
+    else
+      uncached_k5_user?
+    end
+  end
+  helper_method :k5_user?
 end

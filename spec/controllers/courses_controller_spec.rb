@@ -19,8 +19,11 @@
 #
 
 require 'sharding_spec_helper'
+require_relative '../helpers/k5_common'
 
 describe CoursesController do
+  include K5Common
+
   describe "GET 'index'" do
     before(:each) do
       controller.instance_variable_set(:@domain_root_account, Account.default)
@@ -63,6 +66,65 @@ describe CoursesController do
       expect(response).to be_successful
       assigns[:future_enrollments].each do |e|
         expect(assigns[:current_enrollments]).not_to include e
+      end
+    end
+
+    it "sets k5_theme when k5 is enabled" do
+      course_with_student_logged_in
+      toggle_k5_setting(@course.account)
+
+      get_index @student
+      expect(assigns[:js_bundles].flatten).to include :k5_theme
+      expect(assigns[:css_bundles].flatten).to include :k5_theme
+    end
+
+    it "does not set k5_theme when k5 is off" do
+      course_with_student_logged_in
+
+      get_index @student
+      expect(assigns[:js_bundles].flatten).not_to include :k5_theme
+      expect(assigns[:css_bundles].flatten).not_to include :k5_theme
+    end
+
+    describe "homeroom courses" do
+      before :once do
+        @account = Account.default
+        @account.settings[:enable_as_k5_account] = {value: true}
+        @account.save!
+
+        @teacher1 = user_factory(active_all: true, account: @account)
+        @student1 = user_factory(active_all: true, account: @account)
+
+        @subject = course_factory(account: @account, course_name: "Subject", active_all: true)
+        @homeroom = course_factory(account: @account, course_name: "Homeroom", active_all: true)
+        @homeroom.homeroom_course = true
+        @homeroom.save!
+
+        @subject.enroll_teacher(@teacher1).accept!
+        @subject.enroll_student(@student1).accept!
+        @homeroom.enroll_teacher(@teacher1).accept!
+        @homeroom.enroll_student(@student1).accept!
+      end
+
+      it "should not be included for students" do
+        controller.instance_variable_set(:@current_user, @student1)
+        controller.load_enrollments_for_index
+        expect(assigns[:current_enrollments].length).to be 1
+        expect(assigns[:current_enrollments][0].course.name).to eq "Subject"
+      end
+
+      it "should be included for teachers" do
+        controller.instance_variable_set(:@current_user, @teacher1)
+        controller.load_enrollments_for_index
+        expect(assigns[:current_enrollments].length).to be 2
+      end
+
+      it "should be included for users with teacher and student enrollments" do
+        course_factory(active_all: true)
+        @course.enroll_teacher(@student1).accept!
+        controller.instance_variable_set(:@current_user, @student1)
+        controller.load_enrollments_for_index
+        expect(assigns[:current_enrollments].length).to be 3
       end
     end
 
@@ -769,7 +831,6 @@ describe CoursesController do
     end
 
     it "should only set course color js_env vars for elementary courses" do
-      @course.root_account.enable_feature!(:canvas_for_elementary)
       @course.account.settings[:enable_as_k5_account] = {value: true}
       @course.account.save!
       @course.course_color = "#BAD"
@@ -975,6 +1036,7 @@ describe CoursesController do
     end
 
     it "should not find deleted courses" do
+      skip('flaky spec: LS-2269')
       user_session(@teacher)
       @course.destroy
       assert_page_not_found do
@@ -1553,9 +1615,7 @@ describe CoursesController do
 
     describe "when account is enabled as k5 account" do
       before :once do
-        @course.root_account.enable_feature!(:canvas_for_elementary)
-        @course.account.settings[:enable_as_k5_account] = {value: true}
-        @course.account.save!
+        toggle_k5_setting(@course.account)
       end
 
       it "sets the course_home_view to 'k5_dashboard'" do
@@ -1565,13 +1625,15 @@ describe CoursesController do
         expect(assigns[:course_home_view]).to eq 'k5_dashboard'
       end
 
-      it "registers k5_course js and css bundles and sets K5_MODE = true in js_env" do
+      it "registers k5_course js and css bundles and sets K5_USER = true in js_env" do
         user_session(@student)
 
         get 'show', params: {:id => @course.id}
         expect(assigns[:js_bundles].flatten).to include :k5_course
+        expect(assigns[:js_bundles].flatten).to include :k5_theme
         expect(assigns[:css_bundles].flatten).to include :k5_dashboard
-        expect(assigns[:js_env][:K5_MODE]).to be_truthy
+        expect(assigns[:css_bundles].flatten).to include :k5_theme
+        expect(assigns[:js_env][:K5_USER]).to be_truthy
       end
 
       it "registers module-related js and css bundles and sets CONTEXT_MODULE_ASSIGNMENT_INFO_URL in js_env" do
@@ -2060,6 +2122,7 @@ describe CoursesController do
     end
 
     it 'should not allow unpublishing of the course if submissions present' do
+      skip('flaky spec: LS-2269')
       course_with_student_submissions({active_all: true, submission_points: true})
       put 'update', params: {:id => @course.id, :course => {:event => 'claim'}}
       @course.reload

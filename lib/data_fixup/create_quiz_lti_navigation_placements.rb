@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+#
 # Copyright (C) 2021 - present Instructure, Inc.
 #
 # This file is part of Canvas.
@@ -16,22 +17,21 @@
 # You should have received a copy of the GNU Affero General Public License along
 # with this program. If not, see <http://www.gnu.org/licenses/>.
 
-class CreateMentions < ActiveRecord::Migration[6.0]
-  tag :predeploy
+module DataFixup::CreateQuizLtiNavigationPlacements
+  def self.run
+    quiz_lti_tools = ContextExternalTool.quiz_lti
+      .where(context_type: 'Account').where.not(workflow_state: 'deleted')
 
-  def up
-    create_table :mentions do |t|
-      t.references :discussion_entry, foreign_key: true, index: true, null: false
-      t.references :user, foreign_key: true, index: true, null: false
-      t.references :root_account, foreign_key: { to_table: :accounts }, index: false, null: false
-      t.string :workflow_state, default: "active", null: false, limit: 255
-      t.timestamps
+    quiz_lti_tools.preload(:context_external_tool_placements).find_each do |quiz_tool|
+      placements = quiz_tool.context_external_tool_placements
+
+      ['account', 'course'].each do |context|
+        placement_type = "#{context}_navigation"
+
+        if placements.find_by(placement_type: placement_type).blank?
+          ContextExternalToolPlacement.create(placement_type: placement_type, context_external_tool_id: quiz_tool.id)
+        end
+      end
     end
-    set_replica_identity(:microsoft_sync_groups, :index_microsoft_sync_groups_replica_identity)
   end
-
-  def down
-    drop_table :mentions
-  end
-
 end

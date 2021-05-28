@@ -28,7 +28,7 @@ import React from 'react'
 
 jest.mock('@canvas/rce/RichContentEditor')
 
-describe.skip('DiscussionFullPage', () => {
+describe('DiscussionFullPage', () => {
   const server = mswServer(handlers)
   const setOnFailure = jest.fn()
   const setOnSuccess = jest.fn()
@@ -40,7 +40,12 @@ describe.skip('DiscussionFullPage', () => {
 
     window.ENV = {
       discussion_topic_id: '1',
-      manual_mark_as_read: false
+      manual_mark_as_read: false,
+      current_user: {
+        id: 'PLACEHOLDER',
+        display_name: 'Omar Soto-Fortuño',
+        avatar_image_url: 'www.avatar.com'
+      }
     }
   })
 
@@ -87,7 +92,7 @@ describe.skip('DiscussionFullPage', () => {
       expect(await container.findByText('This is the child reply')).toBeInTheDocument()
     })
 
-    it('should allow deleting entries', async () => {
+    it.skip('should allow deleting entries', async () => {
       window.confirm = jest.fn(() => true)
       const container = setup()
 
@@ -96,11 +101,11 @@ describe.skip('DiscussionFullPage', () => {
 
       const deleteButton = container.getByText('Delete')
       fireEvent.click(deleteButton)
-
+      await new Promise(resolve => setTimeout(resolve, 0))
       expect(await container.findByText('Deleted by Hank Mccoy')).toBeInTheDocument()
     })
 
-    it('toggles an entries read state when the Mark as Read/Unread is clicked', async () => {
+    it.skip('toggles an entries read state when the Mark as Read/Unread is clicked', async () => {
       const container = setup()
       const actionsButton = await container.findByTestId('thread-actions-menu')
 
@@ -188,7 +193,7 @@ describe.skip('DiscussionFullPage', () => {
       expect(await container.getByText('This is a Discussion Topic Message')).toBeInTheDocument()
     })
 
-    it('toggles a topics subscribed state when subscribed is clicked', async () => {
+    it.skip('toggles a topics subscribed state when subscribed is clicked', async () => {
       const container = setup()
       await waitFor(() =>
         expect(container.getByText('This is a Discussion Topic Message')).toBeInTheDocument()
@@ -200,7 +205,7 @@ describe.skip('DiscussionFullPage', () => {
       expect(await container.findByText('Subscribed')).toBeInTheDocument()
     })
 
-    it('renders a readonly publish button if canUnpublish is false', async () => {
+    it.skip('renders a readonly publish button if canUnpublish is false', async () => {
       const container = setup()
       await waitFor(() =>
         expect(container.getByText('This is a Discussion Topic Message')).toBeInTheDocument()
@@ -213,7 +218,7 @@ describe.skip('DiscussionFullPage', () => {
   })
 
   describe('error handling', () => {
-    it('should render generic error page when DISCUSSION_QUERY returns errors', async () => {
+    it.skip('should render generic error page when DISCUSSION_QUERY returns errors', async () => {
       server.use(
         graphql.query('GetDiscussionQuery', (req, res, ctx) => {
           return res.once(

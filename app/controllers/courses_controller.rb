@@ -498,6 +498,8 @@ class CoursesController < ApplicationController
           css_bundle :context_list, :course_list
           js_bundle :course_list
 
+          set_k5_mode(require_k5_theme: true)
+
           if @current_user
             content_for_head helpers.auto_discovery_link_tag(:atom, feeds_user_format_path(@current_user.feed_code, :atom), {:title => t('titles.rss.course_announcements', "Course Announcements Atom Feed")})
           end
@@ -514,6 +516,9 @@ class CoursesController < ApplicationController
 
   def load_enrollments_for_index
     all_enrollments = @current_user.enrollments.not_deleted.shard(@current_user.in_region_associated_shards).preload(:enrollment_state, :course, :course_section).to_a
+    if @current_user.roles(@domain_root_account).all? { |role| role == 'student' || role == 'user' }
+      all_enrollments = all_enrollments.reject { |e| e.course.elementary_homeroom_course? }
+    end
     @past_enrollments = []
     @current_enrollments = []
     @future_enrollments = []
@@ -2054,7 +2059,7 @@ class CoursesController < ApplicationController
       if @context.grants_right?(@current_user, session, :read)
         # No matter who the user is we want the course dashboard to hide the left nav
         set_k5_mode
-        @show_left_side = !@k5_mode
+        @show_left_side = !@context.elementary_subject_course?
 
         check_for_readonly_enrollment_state
 
@@ -2062,7 +2067,7 @@ class CoursesController < ApplicationController
 
         check_incomplete_registration
 
-        unless @k5_mode
+        unless @context.elementary_subject_course?
           add_crumb(@context.nickname_for(@current_user, :short_name), url_for(@context), :id => "crumb_#{@context.asset_string}")
         end
         GuardRail.activate(:primary) do
@@ -2074,7 +2079,7 @@ class CoursesController < ApplicationController
         default_view = @context.default_view || @context.default_home_page
         @course_home_view = "feed" if params[:view] == "feed"
         @course_home_view ||= default_view
-        @course_home_view = "k5_dashboard" if @k5_mode
+        @course_home_view = "k5_dashboard" if @context.elementary_subject_course?
         @course_home_view = "announcements" if @context.elementary_homeroom_course?
 
         start_date = 14.days.ago.beginning_of_day
@@ -2087,7 +2092,7 @@ class CoursesController < ApplicationController
                    id: @context.id.to_s,
                    name: @context.name,
                    image_url: @context.feature_enabled?(:course_card_images) ? @context.image : nil,
-                   color: @k5_mode ? @context.course_color : nil,
+                   color: @context.elementary_subject_course? ? @context.course_color : nil,
                    pages_url: polymorphic_url([@context, :wiki_pages]),
                    front_page_title: @context&.wiki&.front_page&.title,
                    default_view: default_view,
@@ -2686,23 +2691,23 @@ class CoursesController < ApplicationController
   #     course[blueprint_restrictions_by_object_type][assignment][content]=1
   #
   # @argument course[homeroom_course] [Boolean]
-  #   Sets the course as a homeroom course. The setting takes effect only when the Canvas for Elementary feature
-  #   is enabled and the course is associated with a K-5-enabled account.
+  #   Sets the course as a homeroom course. The setting takes effect only when the course is associated
+  #   with a Canvas for Elementary-enabled account.
   #
   # @argument course[sync_enrollments_from_homeroom] [String]
-  #   Syncs enrollments from the homeroom that is set in homeroom_course_id. The setting only takes effect when
-  #   Canvas for Elementary feature is enabled and sync_enrollments_from_homeroom is enabled.
+  #   Syncs enrollments from the homeroom that is set in homeroom_course_id. The setting only takes effect when the
+  #   course is associated with a Canvas for Elementary-enabled account and sync_enrollments_from_homeroom is enabled.
   #
   # @argument course[homeroom_course_id] [String]
-  #   Sets the Homeroom Course id to be used with sync_enrollments_from_homeroom. The setting only takes effect when
-  #   Canvas for Elementary feature is enabled and sync_enrollments_from_homeroom is enabled.
+  #   Sets the Homeroom Course id to be used with sync_enrollments_from_homeroom. The setting only takes effect when the
+  #   course is associated with a Canvas for Elementary-enabled account and sync_enrollments_from_homeroom is enabled.
   #
   # @argument course[template] [Boolean]
   #   Enable or disable the course as a template that can be selected by an account
   #
   # @argument course[course_color] [String]
-  #   Sets a color in hex code format to be associated with the course. The setting takes effect only when the
-  #   Canvas for Elementary feature is enabled and the course is associated with a K-5-enabled account.
+  #   Sets a color in hex code format to be associated with the course. The setting takes effect only when the course
+  #   is associated with a Canvas for Elementary-enabled account.
   #
   # @example_request
   #   curl https://<canvas>/api/v1/courses/<course_id> \

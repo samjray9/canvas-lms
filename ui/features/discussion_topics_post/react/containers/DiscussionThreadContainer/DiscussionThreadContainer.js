@@ -28,7 +28,6 @@ import {
 } from '../../../graphql/Mutations'
 import {DeletedPostMessage} from '../../components/DeletedPostMessage/DeletedPostMessage'
 import {DISCUSSION_SUBENTRIES_QUERY} from '../../../graphql/Queries'
-import {DiscussionEntry} from '../../../graphql/DiscussionEntry'
 import {DiscussionEdit} from '../../components/DiscussionEdit/DiscussionEdit'
 import {Flex} from '@instructure/ui-flex'
 import I18n from 'i18n!discussion_topics_post'
@@ -80,6 +79,7 @@ export const mockThreads = {
 }
 
 export const DiscussionThreadContainer = props => {
+  const {sort} = useContext(SearchContext)
   const {setOnFailure, setOnSuccess} = useContext(AlertManagerContext)
   const [expandReplies, setExpandReplies] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
@@ -91,7 +91,7 @@ export const DiscussionThreadContainer = props => {
 
     addReplyToDiscussion(cache, props.discussionTopicGraphQLId)
     addReplyToDiscussionEntry(cache, props.discussionEntry.id, newDiscussionEntry)
-    addReplyToSubentries(cache, props.discussionEntry._id, newDiscussionEntry)
+    addReplyToSubentries(cache, props.discussionEntry._id, sort, newDiscussionEntry)
   }
 
   const [createDiscussionEntry] = useMutation(CREATE_DISCUSSION_ENTRY, {
@@ -289,10 +289,7 @@ export const DiscussionThreadContainer = props => {
 
   return (
     <>
-      <div
-        style={{marginLeft: marginDepth, paddingLeft: theme.variables.spacing.small}}
-        ref={threadRef}
-      >
+      <div style={{marginLeft: marginDepth, paddingLeft: '0.75rem'}} ref={threadRef}>
         <Flex>
           <Flex.Item shouldShrink shouldGrow>
             {renderPostMessage()}
@@ -324,6 +321,19 @@ export const DiscussionThreadContainer = props => {
                       }
                     : null
                 }
+                goToParent={
+                  props.depth === 0
+                    ? null
+                    : () => {
+                        const topOffset = props.parentRef.current.offsetTop
+                        window.scrollTo(0, topOffset - 44)
+                      }
+                }
+                goToTopic={() => {
+                  setTimeout(() => {
+                    window.scrollTo(0, 0)
+                  })
+                }}
               />
             </Flex.Item>
           )}
@@ -360,6 +370,7 @@ export const DiscussionThreadContainer = props => {
           discussionEntryId={props.discussionEntry._id}
           depth={props.depth + 1}
           markAsRead={props.markAsRead}
+          parentRef={threadRef}
         />
       )}
       {expandReplies && props.depth === 0 && props.discussionEntry.lastReply && (
@@ -387,10 +398,11 @@ export const DiscussionThreadContainer = props => {
 
 DiscussionThreadContainer.propTypes = {
   discussionTopicGraphQLId: PropTypes.string,
-  discussionEntry: DiscussionEntry.shape,
+  discussionEntry: PropTypes.object.isRequired,
   depth: PropTypes.number,
   assignment: Assignment.shape,
-  markAsRead: PropTypes.func
+  markAsRead: PropTypes.func,
+  parentRef: PropTypes.object
 }
 
 DiscussionThreadContainer.defaultProps = {
@@ -431,6 +443,7 @@ const DiscussionSubentries = props => {
       discussionEntry={entry}
       discussionTopicGraphQLId={props.discussionTopicGraphQLId}
       markAsRead={props.markAsRead}
+      parentRef={props.parentRef}
     />
   ))
 }
@@ -439,5 +452,6 @@ DiscussionSubentries.propTypes = {
   discussionTopicGraphQLId: PropTypes.string,
   discussionEntryId: PropTypes.string,
   depth: PropTypes.number,
-  markAsRead: PropTypes.func
+  markAsRead: PropTypes.func,
+  parentRef: PropTypes.object
 }

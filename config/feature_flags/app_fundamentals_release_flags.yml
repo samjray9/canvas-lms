@@ -19,11 +19,6 @@ granular_permissions_course_files:
   applies_to: RootAccount
   display_name: Granular permissions for managing course files
   description: Add granularity to permissions around managing course files
-release_notes_ui:
-  state: hidden
-  applies_to: SiteAdmin
-  display_name: Advertise release notes via the UI
-  description: Enables siteadmin users to configure release notes to display to users
 course_templates:
   state: hidden
   applies_to: RootAccount
@@ -32,5 +27,5 @@ course_templates:
 persist_inferred_authentication_providers:
   state: hidden
   applies_to: RootAccount
-  display_name: Require Authenticion Provider on Logins
+  display_name: Require Authentication Provider on Logins
   description: Persists the used authentication provider when logging in, and defaults new logins to the default provider

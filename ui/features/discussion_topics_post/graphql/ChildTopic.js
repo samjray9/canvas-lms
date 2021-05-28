@@ -21,7 +21,7 @@ import {shape, string} from 'prop-types'
 
 export const ChildTopic = {
   fragment: gql`
-    fragment ChildTopic on ChildTopic {
+    fragment ChildTopic on Discussion {
       id
       _id
       contextName
@@ -39,13 +39,13 @@ export const ChildTopic = {
   mock: ({
     id = 'QXNzaWdubWVudC0x22',
     _id = '1',
-    contextName = 'RGlzY3Vzc2lvbi0xMA==',
+    contextName = 'Super Group',
     contextId = '5'
   } = {}) => ({
     id,
     _id,
     contextId,
     contextName,
-    __typename: 'ChildTopic'
+    __typename: 'Discussion'
   })
 }

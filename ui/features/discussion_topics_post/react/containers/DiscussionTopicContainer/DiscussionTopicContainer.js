@@ -31,14 +31,14 @@ import {PostMessage} from '../../components/PostMessage/PostMessage'
 import {PostToolbar} from '../../components/PostToolbar/PostToolbar'
 import {
   DELETE_DISCUSSION_TOPIC,
-  PUBLISH_DISCUSSION_TOPIC,
+  UPDATE_DISCUSSION_TOPIC,
   SUBSCRIBE_TO_DISCUSSION_TOPIC
 } from '../../../graphql/Mutations'
 import PropTypes from 'prop-types'
 import React, {useContext, useState} from 'react'
 import {SearchContext} from '../../utils/constants'
 import {useMutation} from 'react-apollo'
-import {isGraded, getSpeedGraderUrl, getEditUrl} from '../../utils'
+import {isGraded, getSpeedGraderUrl, getEditUrl, getPeerReviewsUrl} from '../../utils'
 import {View} from '@instructure/ui-view'
 
 export const DiscussionTopicContainer = ({createDiscussionEntry, ...props}) => {
@@ -61,7 +61,10 @@ export const DiscussionTopicContainer = ({createDiscussionEntry, ...props}) => {
     title: props.discussionTopic?.title || '',
     unread: props.discussionTopic?.entryCounts?.unreadCount,
     replies: props.discussionTopic?.entryCounts?.repliesCount,
-    assignment: props.discussionTopic?.assignment
+    assignment: props.discussionTopic?.assignment,
+    assignmentOverrides: props.discussionTopic?.assignment?.assignmentOverrides?.nodes || [],
+    childTopics: props.discussionTopic?.childTopics || [],
+    groupSet: props.discussionTopic?.groupSet || false
   }
 
   // TODO: Change this to the new canGrade permission.
@@ -77,8 +80,28 @@ export const DiscussionTopicContainer = ({createDiscussionEntry, ...props}) => {
   const canCopyAndSendTo = discussionTopicData?.permissions?.copyAndSendTo
   const canModerate = discussionTopicData?.permissions?.moderateForum
   const canUnpublish = props.discussionTopic.canUnpublish
+  const canSeeCommons =
+    discussionTopicData?.permissions?.manageContent && ENV.discussion_topic_menu_tools?.length > 0
+  const canSeeGroupsMenu =
+    discussionTopicData?.permissions?.readAsAdmin &&
+    discussionTopicData?.childTopics.length > 0 &&
+    discussionTopicData?.groupSet
+
+  const canSeeMultipleDueDates = !!(
+    discussionTopicData?.permissions?.readAsAdmin &&
+    discussionTopicData?.assignmentOverrides?.length > 0
+  )
 
   if (isGraded(discussionTopicData.assignment)) {
+    if (discussionTopicData.assignmentOverrides.length > 0 && canSeeMultipleDueDates) {
+      discussionTopicData.assignmentOverrides.push({
+        dueAt: discussionTopicData.assignment.dueAt,
+        unlockAt: discussionTopicData.assignment.unlockAt,
+        lockAt: discussionTopicData.assignment.lockAt,
+        title: I18n.t('Everyone Else'),
+        id: discussionTopicData.assignment.id
+      })
+    }
     discussionTopicData.dueAt = DateHelper.formatDatetimeForDiscussions(
       props.discussionTopic.assignment.dueAt
     )
@@ -121,14 +144,10 @@ export const DiscussionTopicContainer = ({createDiscussionEntry, ...props}) => {
     }
   }
 
-  const [publishDiscussionTopic] = useMutation(PUBLISH_DISCUSSION_TOPIC, {
+  const [updateDiscussionTopic] = useMutation(UPDATE_DISCUSSION_TOPIC, {
     onCompleted: data => {
       if (!data.updateDiscussionTopic.errors) {
-        setOnSuccess(
-          data.updateDiscussionTopic.discussionTopic.published
-            ? I18n.t('You have successfully published the discussion topic.')
-            : I18n.t('You have successfully unpublished the discussion topic.')
-        )
+        setOnSuccess(I18n.t('You have successfully updated the discussion topic.'))
       } else {
         setOnFailure(I18n.t('There was an unexpected error updating the discussion topic.'))
       }
@@ -139,10 +158,19 @@ export const DiscussionTopicContainer = ({createDiscussionEntry, ...props}) => {
   })
 
   const onPublish = () => {
-    publishDiscussionTopic({
+    updateDiscussionTopic({
       variables: {
         discussionTopicId: discussionTopicData._id,
         published: !discussionTopicData.published
+      }
+    })
+  }
+
+  const onToggleLocked = locked => {
+    updateDiscussionTopic({
+      variables: {
+        discussionTopicId: discussionTopicData._id,
+        locked
       }
     })
   }
@@ -190,6 +218,7 @@ export const DiscussionTopicContainer = ({createDiscussionEntry, ...props}) => {
       <div style={{position: 'sticky', top: 0, zIndex: 10, marginTop: '-24px'}}>
         <View as="div" padding="medium 0" background="primary">
           <DiscussionPostToolbar
+            childTopics={canSeeGroupsMenu ? discussionTopicData.childTopics : null}
             selectedView={filter}
             sortDirection={sort}
             isCollapsedReplies
@@ -215,6 +244,8 @@ export const DiscussionTopicContainer = ({createDiscussionEntry, ...props}) => {
                 <Alert
                   dueAtDisplayText={discussionTopicData.dueAt}
                   pointsPossible={discussionTopicData.pointsPossible}
+                  assignmentOverrides={discussionTopicData.assignmentOverrides}
+                  canSeeMultipleDueDates={canSeeMultipleDueDates}
                 />
               </View>
             )}
@@ -303,14 +334,41 @@ export const DiscussionTopicContainer = ({createDiscussionEntry, ...props}) => {
                             }
                           : null
                       }
-                      onPeerReviews={canPeerReview ? () => {} : null}
+                      onPeerReviews={
+                        canPeerReview
+                          ? () => {
+                              window.location.assign(
+                                getPeerReviewsUrl(ENV.course_id, discussionTopicData.assignment._id)
+                              )
+                            }
+                          : null
+                      }
                       onShowRubric={canShowRubric ? () => {} : null}
                       onAddRubric={canAddRubric ? () => {} : null}
                       isPublished={discussionTopicData.published}
                       canUnpublish={canUnpublish}
                       isSubscribed={discussionTopicData.subscribed}
-                      onOpenForComments={canOpenForComments ? () => {} : null}
-                      onCloseForComments={canCloseForComments ? () => {} : null}
+                      onOpenForComments={
+                        canOpenForComments
+                          ? () => {
+                              onToggleLocked(false)
+                            }
+                          : null
+                      }
+                      onCloseForComments={
+                        canCloseForComments
+                          ? () => {
+                              onToggleLocked(true)
+                            }
+                          : null
+                      }
+                      onShareToCommons={
+                        canSeeCommons
+                          ? () => {
+                              window.location.assign(ENV.discussion_topic_menu_tools[0].base_url)
+                            }
+                          : null
+                      }
                     />
                   </Flex.Item>
                 </Flex>

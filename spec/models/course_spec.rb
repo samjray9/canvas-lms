@@ -2737,10 +2737,27 @@ describe Course, "tabs_available" do
       expect(available_tabs.select{|t| t[:hidden]}).to be_empty
     end
 
-    describe "with canvas_for_elementary feature on" do
+    it "should include item banks tab for active external tools" do
+      @course.context_external_tools.create!(
+        :url => "http://example.com/ims/lti",
+        :consumer_key => "asdf",
+        :shared_secret => "hjkl",
+        :name => "external tool 1",
+        :course_navigation => {
+          :text => "Item Banks",
+          :url =>  "http://example.com/ims/lti",
+          :default => false,
+        }
+      )
+
+      tabs = @course.tabs_available(@user,include_external: true).map { |tab| tab[:label] }
+
+      expect(tabs).to be_include("Item Banks")
+    end
+
+    describe "with canvas_for_elementary account setting on" do
       context "homeroom course" do
         before :once do
-          @course.root_account.enable_feature!(:canvas_for_elementary)
           @course.account.settings[:enable_as_k5_account] = {value: true}
           @course.homeroom_course = true
           @course.save!
@@ -2776,7 +2793,6 @@ describe Course, "tabs_available" do
 
       context "subject course" do
         before :once do
-          @course.root_account.enable_feature!(:canvas_for_elementary)
           @course.account.settings[:enable_as_k5_account] = {value: true}
           @course.save!
         end
@@ -2910,6 +2926,24 @@ describe Course, "tabs_available" do
 
       expect(tabs).to be_include(t1.asset_string)
       expect(tabs).not_to be_include(t2.asset_string)
+    end
+
+    it "should not include item banks tab for active external tools" do
+      @course.context_external_tools.create!(
+        :url => "http://example.com/ims/lti",
+        :consumer_key => "asdf",
+        :shared_secret => "hjkl",
+        :name => "external tool 1",
+        :course_navigation => {
+          :text => "Item Banks",
+          :url =>  "http://example.com/ims/lti",
+          :default => false,
+        }
+      )
+
+      tabs = @course.tabs_available(@user,include_external: true).map { |tab| tab[:label] }
+
+      expect(tabs).not_to be_include("Item Banks")
     end
 
     it 'sets the target value on the tab if the external tool has a windowTarget' do
@@ -4934,7 +4968,6 @@ end
 describe Course, "#sync_homeroom_enrollments" do
   before :once do
     @homeroom_course = course_factory(active_course: true)
-    @homeroom_course.root_account.enable_feature!(:canvas_for_elementary)
     @homeroom_course.account.settings[:enable_as_k5_account] = {value: true}
     @homeroom_course.homeroom_course = true
     @homeroom_course.save!
@@ -4983,6 +5016,19 @@ describe Course, "#sync_homeroom_enrollments" do
     @homeroom_course.enrollments.find_by(user: @teacher).destroy
     @course.sync_homeroom_enrollments
     expect(@course.user_is_instructor?(@teacher)).to eq(false)
+  end
+
+  it "copies custom roles and enrollment dates" do
+    role = Account.default.roles.create!(name: 'Cool Student', base_role_type: 'StudentEnrollment')
+    e1 = @homeroom_course.enroll_student(@student, role: role, start_at: 1.day.ago.beginning_of_day, end_at: 1.day.from_now.beginning_of_day, allow_multiple_enrollments: true)
+    e1.conclude
+    @course.sync_homeroom_enrollments
+    expect(@course.enrollments.where(user_id: @student.id).size).to eq 2
+    e2 = @course.enrollments.where(user_id: @student.id, role_id: role.id).take
+    expect(e2.role_id).to eq role.id
+    expect(e2.start_at).to eq e1.start_at
+    expect(e2.end_at).to eq e1.end_at
+    expect(e2.completed_at).to eq e1.completed_at
   end
 
   it "returns false unless course is an elementary subject and sync setting is on and homeroom_course_id is set" do
