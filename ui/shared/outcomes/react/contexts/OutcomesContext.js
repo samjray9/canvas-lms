@@ -20,17 +20,21 @@ import {createContext} from 'react'
 
 const OutcomesContext = createContext({})
 
-export const getContext = () => {
+export const getContext = isMobileView => {
   const [snakeContextType, contextId] = ENV.context_asset_string.split('_')
   const contextType = snakeContextType === 'course' ? 'Course' : 'Account'
   const useRceEnhancements = ENV.use_rce_enhancements
   const rootOutcomeGroup = ENV.ROOT_OUTCOME_GROUP
+  const friendlyDescriptionFF = ENV.OUTCOMES_FRIENDLY_DESCRIPTION
+
   return {
     env: {
       contextType,
       contextId,
       useRceEnhancements,
-      rootOutcomeGroup
+      rootOutcomeGroup,
+      friendlyDescriptionFF,
+      isMobileView
     }
   }
 }

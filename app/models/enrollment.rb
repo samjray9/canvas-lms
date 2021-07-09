@@ -1258,6 +1258,8 @@ class Enrollment < ActiveRecord::Base
     where("enrollment_states.state IN ('active', 'invited', 'pending_invited', 'pending_active')") }
   scope :not_inactive_by_date_ignoring_access, -> { joins(:enrollment_state).
     where("enrollment_states.state IN ('active', 'invited', 'completed', 'pending_invited', 'pending_active')") }
+  scope :new_or_active_by_date, -> { joins(:enrollment_state).
+    where("enrollment_states.state IN ('active', 'invited', 'pending_invited', 'pending_active', 'creation_pending')") }
 
   scope :currently_online, -> { joins(:pseudonyms).where("pseudonyms.last_request_at>?", 5.minutes.ago) }
   # this returns enrollments for creation_pending users; should always be used in conjunction with the invited scope
@@ -1566,6 +1568,6 @@ class Enrollment < ActiveRecord::Base
     return unless self.root_account.feature_enabled?(:microsoft_group_enrollments_syncing)
     return unless self.root_account.settings[:microsoft_sync_enabled]
 
-    MicrosoftSync::Group.not_deleted.find_by(course_id: course_id)&.enqueue_future_sync
+    MicrosoftSync::Group.not_deleted.find_by(course_id: course_id)&.enqueue_future_partial_sync self
   end
 end

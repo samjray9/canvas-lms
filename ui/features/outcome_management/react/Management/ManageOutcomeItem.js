@@ -41,11 +41,11 @@ const allowAdminEdit = () => {
 }
 
 const ManageOutcomeItem = ({
-  id,
+  _id,
+  linkId,
   title,
   description,
   canManageOutcome,
-  isFirst,
   isChecked,
   onMenuHandler,
   onCheckboxHandler,
@@ -53,8 +53,8 @@ const ManageOutcomeItem = ({
 }) => {
   const [truncate, setTruncate] = useState(true)
   const onClickHandler = () => setTruncate(prevState => !prevState)
-  const onChangeHandler = () => onCheckboxHandler(id)
-  const onMenuHandlerWrapper = (_, action) => onMenuHandler(id, action)
+  const onChangeHandler = () => onCheckboxHandler({_id, linkId, title, canUnlink})
+  const onMenuHandlerWrapper = (_, action) => onMenuHandler(linkId, action)
 
   if (!title) return null
 
@@ -62,8 +62,8 @@ const ManageOutcomeItem = ({
     <View
       as="div"
       padding="x-small 0"
-      borderWidth={isFirst ? 'small 0' : '0 0 small'}
-      data-testid={isFirst ? 'outcome-with-top-bottom-border' : 'outcome-with-bottom-border'}
+      borderWidth="0 0 small"
+      data-testid="outcome-management-item"
     >
       <Flex as="div" alignItems="start">
         <Flex.Item as="div" size="4.125rem">
@@ -138,15 +138,11 @@ const ManageOutcomeItem = ({
   )
 }
 
-ManageOutcomeItem.defaultProps = {
-  isFirst: false
-}
-
 ManageOutcomeItem.propTypes = {
-  id: PropTypes.string.isRequired,
+  _id: PropTypes.string.isRequired,
+  linkId: PropTypes.string.isRequired,
   title: PropTypes.string.isRequired,
   description: PropTypes.string,
-  isFirst: PropTypes.bool,
   isChecked: PropTypes.bool.isRequired,
   onMenuHandler: PropTypes.func.isRequired,
   onCheckboxHandler: PropTypes.func.isRequired,

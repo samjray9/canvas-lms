@@ -53,7 +53,8 @@ function saveSettings(state) {
     'userId',
     'include_test_plugin',
     'test_plugin_toolbar',
-    'test_plugin_menu'
+    'test_plugin_menu',
+    'readonly'
   ].forEach(settingKey => {
     saveSetting(settingKey, state[settingKey])
   })
@@ -81,12 +82,12 @@ function Demo() {
   const [test_plugin_menu, set_test_plugin_menu] = useState(
     getSetting('test_plugin_menu', '__none__')
   )
-  const [trayProps, set_trayProps] = useState(() => getTrayPropsFromOpts())
+  const [rcsProps, set_rcsProps] = useState(() => getRcsPropsFromOpts())
   const [toolbar, set_toolbar] = useState(() => updateToolbar())
   const [menu, set_menu] = useState(() => updateMenu())
   const [plugins, set_plugins] = useState(() => updatePlugins())
-  const [tinymce_editor, set_tinymce_editor] = useState(null)
   const [currentContent, setCurrentContent] = useState('')
+  const [readonly, set_readonly] = useState(() => getSetting('readonly', false))
 
   const rceRef = useRef(null)
 
@@ -118,10 +119,11 @@ function Demo() {
     set_include_test_plugin(newOpts.include_test_plugin)
     set_test_plugin_toolbar(newOpts.test_plugin_toolbar)
     set_test_plugin_menu(newOpts.test_plugin_menu)
-    set_trayProps(getTrayPropsFromOpts())
+    set_rcsProps(getRcsPropsFromOpts())
     set_toolbar(updateToolbar())
     set_menu(updateMenu())
     set_plugins(updatePlugins())
+    set_readonly(newOpts.readonly)
 
     saveSettings(newOpts)
 
@@ -130,7 +132,7 @@ function Demo() {
     }
   }
 
-  function getTrayPropsFromOpts() {
+  function getRcsPropsFromOpts() {
     return canvas_exists
       ? {
           canUploadFiles: true,
@@ -186,24 +188,24 @@ function Demo() {
           language={lang}
           textareaId="textarea3"
           defaultContent="hello RCE"
+          readOnly={readonly}
           height={350}
           highContrastCSS={[]}
-          trayProps={trayProps}
+          rcsProps={rcsProps}
           toolbar={toolbar}
           menu={menu}
           plugins={plugins}
           onInitted={editor => {
-            set_tinymce_editor(editor)
             setCurrentContent(editor.getContent())
           }}
           onContentChange={value => {
             setCurrentContent(value)
           }}
         />
-        <View margin="small 0 0 0">
+        <View as="div" margin="small 0 0 0">
           <pre>{currentContent}</pre>
         </View>
-        <View margin="small 0 0 0">
+        <View as="div" margin="small 0 0 0">
           <Button
             interaction={rceRef.current ? 'enabled' : 'disabled'}
             onClick={() => {
@@ -239,6 +241,7 @@ function Demo() {
             include_test_plugin={include_test_plugin}
             test_plugin_toolbar={test_plugin_toolbar}
             test_plugin_menu={test_plugin_menu}
+            readonly={readonly}
             onChange={handleOptionsChange}
           />
         </div>

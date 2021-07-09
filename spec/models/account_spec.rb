@@ -1746,6 +1746,7 @@ describe Account do
 
         # should clear caches
         to_be_subaccount.parent_account = account
+        to_be_subaccount.root_account = account
         to_be_subaccount.save!
         expect(to_be_subaccount.default_storage_quota).to eq 10.megabytes
       end
@@ -2223,6 +2224,14 @@ describe Account do
   end
 
   context '#roles_with_enabled_permission' do
+    def create_role_override(permission, role, context, enabled = true)
+      RoleOverride.create!(
+        context: context,
+        permission: permission,
+        role: role,
+        enabled: enabled
+      )
+    end
     let(:account) { account_model }
 
     it 'returns expected roles with the given permission' do
@@ -2231,12 +2240,7 @@ describe Account do
       role.base_role_type = 'TaEnrollment'
       role.workflow_state = 'active'
       role.save!
-      RoleOverride.create!(
-        context: account,
-        permission: 'change_course_state',
-        role: role,
-        enabled: true
-      )
+      create_role_override('change_course_state', role, account)
       expect(
         account.roles_with_enabled_permission(:change_course_state).map(&:name).sort
       ).to eq %w[AccountAdmin AssistantGrader DesignerEnrollment TeacherEnrollment]
@@ -2248,30 +2252,11 @@ describe Account do
       role.base_role_type = 'TeacherEnrollment'
       role.workflow_state = 'active'
       role.save!
-      RoleOverride.create!(
-        context: account,
-        permission: 'manage_courses_add',
-        role: role,
-        enabled: true
-      )
-      RoleOverride.create!(
-        context: account,
-        permission: 'manage_courses_publish',
-        role: role,
-        enabled: true
-      )
-      RoleOverride.create!(
-        context: account,
-        permission: 'manage_courses_conclude',
-        role: role,
-        enabled: true
-      )
-      RoleOverride.create!(
-        context: account,
-        permission: 'manage_courses_delete',
-        role: role,
-        enabled: true
-      )
+      create_role_override('manage_courses_add', role, account)
+      create_role_override('manage_courses_publish', role, account)
+      create_role_override('manage_courses_conclude', role, account)
+      create_role_override('manage_courses_reset', role, account)
+      create_role_override('manage_courses_delete', role, account)
       expect(
         account.roles_with_enabled_permission(:manage_courses_add).map(&:name).sort
       ).to eq %w[AccountAdmin TeacherAdmin]
@@ -2281,6 +2266,9 @@ describe Account do
       expect(
         account.roles_with_enabled_permission(:manage_courses_conclude).map(&:name).sort
       ).to eq %w[AccountAdmin DesignerEnrollment TeacherAdmin TeacherEnrollment]
+      expect(
+        account.roles_with_enabled_permission(:manage_courses_reset).map(&:name).sort
+      ).to eq %w[AccountAdmin TeacherAdmin]
       expect(
         account.roles_with_enabled_permission(:manage_courses_delete).map(&:name).sort
       ).to eq %w[AccountAdmin TeacherAdmin]
@@ -2374,6 +2362,25 @@ describe Account do
       c = a.courses.create!(template: true)
       a.course_template = c
       expect(a).to be_valid
+    end
+  end
+
+  describe "#dummy?" do
+    it "returns false for most accounts" do
+      act = Account.new(id: 1)
+      expect(act.dummy?).to be_falsey
+    end
+
+    it "is true for a 0-id account" do
+      act = Account.new(id: 0)
+      expect(act.dummy?).to be_truthy
+    end
+
+    it "determines the outcome of `unless_dummy`" do
+      act = Account.new(id: 0)
+      expect(act.unless_dummy).to be_nil
+      act.id = 1
+      expect(act.unless_dummy).to be(act)
     end
   end
 end

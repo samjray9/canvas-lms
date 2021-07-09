@@ -40,7 +40,7 @@ import {initializeDateTimeFormatters} from './utilities/dateUtils'
 import {DynamicUiManager, DynamicUiProvider, specialFallbackFocusId} from './dynamic-ui'
 import responsiviser from './components/responsiviser'
 
-const TeacherPreview = React.lazy(() => import('./components/TeacherPreview'))
+const PlannerPreview = React.lazy(() => import('./components/PlannerPreview'))
 const ToDoSidebar = React.lazy(() => import('./components/ToDoSidebar'))
 const PlannerApp = React.lazy(() => import('./components/PlannerApp'))
 const PlannerHeader = React.lazy(() => import('./components/PlannerHeader'))
@@ -52,10 +52,10 @@ export {loadThisWeekItems, startLoadingAllOpportunities, toggleMissingItems}
 
 export {responsiviser}
 
-export function createTeacherPreview(timeZone) {
+export function createPlannerPreview(timeZone) {
   return (
     <Suspense fallback={loading()}>
-      <TeacherPreview timeZone={timeZone} />
+      <PlannerPreview timeZone={timeZone} />
     </Suspense>
   )
 }
@@ -121,8 +121,11 @@ function mergeDefaultOptions(options) {
   return newOpts
 }
 
-function getCourseColor({assetString, color}, {K5_USER, PREFERENCES: {custom_colors = {}}}) {
-  if (K5_USER) {
+function getCourseColor(
+  {assetString, color},
+  {K5_USER, K5_SUBJECT_COURSE, PREFERENCES: {custom_colors = {}}}
+) {
+  if (K5_USER || K5_SUBJECT_COURSE) {
     return color || '#394B58'
   } else {
     return custom_colors[assetString]
@@ -206,7 +209,7 @@ export function initializePlanner(options) {
     initializeDateTimeFormatters(options.dateTimeFormatters)
 
     options.plannerNewActivityButtonId = plannerNewActivityButtonId
-    if (options.env.K5_USER) {
+    if (options.env.K5_USER || options.env.K5_SUBJECT_COURSE) {
       dynamicUiManager.setOffsetElementIds(weeklyPlannerHeaderId, null)
     } else {
       dynamicUiManager.setOffsetElementIds(plannerHeaderId, plannerNewActivityButtonId)
@@ -261,8 +264,8 @@ export function createPlannerApp() {
             plannerActive={plannerActive}
             currentUser={store.getState().currentUser}
             focusFallback={() => dynamicUiManager.focusFallback('item')}
-            k5Mode={initializedOptions.env.K5_USER}
-            isWeekly={initializedOptions.env.K5_USER}
+            k5Mode={initializedOptions.env.K5_USER || initializedOptions.env.K5_SUBJECT_COURSE}
+            isWeekly={initializedOptions.env.K5_USER || initializedOptions.env.K5_SUBJECT_COURSE}
           />
         </Suspense>
       </Provider>

@@ -323,7 +323,7 @@ class AccountsController < ApplicationController
   def index
     respond_to do |format|
       format.html do
-        @accounts = @current_user ? @current_user.adminable_accounts : []
+        @accounts = (@current_user&.all_paginatable_accounts || []).paginate(per_page: 100)
       end
       format.json do
         if @current_user
@@ -372,7 +372,7 @@ class AccountsController < ApplicationController
           @current_user.enrollments.admin.shard(@current_user).except(:select, :joins)
         ).select("accounts.id").distinct.pluck(:id).map{|id| Shard.global_id_for(id)}
       end
-      course_accounts = BookmarkedCollection.wrap(Account::Bookmarker, Account.where(:id => account_ids))
+      course_accounts = ShardedBookmarkedCollection.build(Account::Bookmarker, Account.where(id: account_ids))
       @accounts = Api.paginate(course_accounts, self, api_v1_course_accounts_url)
     else
       @accounts = []
@@ -591,6 +591,9 @@ class AccountsController < ApplicationController
   #   or both the course's end_at and the enrollment term's end_at are set to null.
   #   The value should be formatted as: yyyy-mm-dd or ISO 8601 YYYY-MM-DDTHH:MM:SSZ.
   #
+  # @argument homeroom [Optional, Boolean]
+  #   If set, only return homeroom courses.
+  #
   # @returns [Course]
   def courses_api
     return unless authorized_action(@account, @current_user, :read_course_list)
@@ -664,6 +667,10 @@ class AccountsController < ApplicationController
       @courses = @courses.associated_courses
     elsif !params[:blueprint_associated].nil?
       @courses = @courses.not_associated_courses
+    end
+
+    if value_to_boolean(params[:homeroom])
+      @courses = @courses.homeroom
     end
 
     if starts_before || ends_after
@@ -1172,7 +1179,6 @@ class AccountsController < ApplicationController
         MEMBERSHIP_SERVICE_FEATURE_FLAG_ENABLED: @account.root_account.feature_enabled?(:membership_service_for_lti_tools),
         CONTEXT_BASE_URL: "/accounts/#{@context.id}",
         MASKED_APP_CENTER_ACCESS_TOKEN: @account.settings[:app_center_access_token].try(:[], 0...5),
-        NEW_FEATURES_UI: Account.site_admin.feature_enabled?(:new_features_ui),
         PERMISSIONS: {
           :create_tool_manually => @account.grants_right?(@current_user, session, :create_tool_manually),
           :manage_feature_flags => @account.grants_right?(@current_user, session, :manage_feature_flags)

@@ -106,8 +106,7 @@ class User < ActiveRecord::Base
   has_many :current_groups, :through => :current_group_memberships, :source => :group
   has_many :user_account_associations
   has_many :associated_accounts, -> { order("user_account_associations.depth") }, source: :account, through: :user_account_associations
-  has_many :associated_root_accounts, -> { order("user_account_associations.depth").
-    where(accounts: { parent_account_id: nil }) }, source: :account, through: :user_account_associations
+  has_many :associated_root_accounts, -> { merge(Account.root_accounts.active) }, source: :account, through: :user_account_associations, multishard: true
   has_many :developer_keys
   has_many :access_tokens, -> { where(:workflow_state => "active") }, inverse_of: :user, multishard: true
   has_many :masquerade_tokens, -> { where(:workflow_state => "active") }, class_name: 'AccessToken', inverse_of: :real_user
@@ -203,8 +202,13 @@ class User < ActiveRecord::Base
     class_name: "Auditors::ActiveRecord::GradeChangeRecord",
     dependent: :destroy,
     inverse_of: :grader
+  has_many :auditor_feature_flag_records,
+    class_name: 'Auditors::ActiveRecord::FeatureFlagRecord',
+    dependent: :destroy,
+    inverse_of: :user
 
   has_many :comment_bank_items, -> { where("workflow_state<>'deleted'") }
+  has_many :microsoft_sync_partial_sync_changes, :class_name => 'MicrosoftSync::PartialSyncChange', dependent: :destroy, inverse_of: :user
 
   belongs_to :otp_communication_channel, :class_name => 'CommunicationChannel'
 
@@ -602,11 +606,9 @@ class User < ActiveRecord::Base
         shard_user_ids = users.map(&:id)
 
         data[:enrollments] += shard_enrollments =
-            Enrollment.where("workflow_state NOT IN ('deleted','completed','inactive','rejected') AND type<>'StudentViewEnrollment'").
+            Enrollment.where("workflow_state NOT IN ('deleted','inactive','rejected') AND type<>'StudentViewEnrollment'").
                 where(:user_id => shard_user_ids).
                 select([:user_id, :course_id, :course_section_id]).
-                joins(:enrollment_state).
-                where.not(enrollment_states: {state: 'completed'}).
                 distinct.to_a
 
         # probably a lot of dups, so more efficient to use a set than uniq an array
@@ -654,10 +656,7 @@ class User < ActiveRecord::Base
         current_associations[key] = [aa.id, aa.depth]
       end
 
-      account_id_to_root_account_id = Account.where(id: precalculated_associations&.keys).pluck(:id, :root_account_id).reduce({}) do |cache, fields|
-        cache[fields[0]] = fields[1] || fields[0]
-        cache
-      end
+      account_id_to_root_account_id = Account.where(id: precalculated_associations&.keys).pluck(:id, Arel.sql(Account.resolved_root_account_id_sql)).to_h
 
       users_or_user_ids.uniq.sort_by{|u| u.try(:id) || u}.each do |user_id|
         if user_id.is_a? User
@@ -1696,6 +1695,10 @@ class User < ActiveRecord::Base
     !!preferences[:disable_inbox]
   end
 
+  def elementary_dashboard_disabled?
+    !!preferences[:elementary_dashboard_disabled]
+  end
+
   def create_announcements_unlocked?
     preferences.fetch(:create_announcements_unlocked, false)
   end
@@ -1848,7 +1851,7 @@ class User < ActiveRecord::Base
             if ids.empty?
               scope = scope.none
             else
-              shards = shards & ids.map { |id| Shard.shard_for(id) }
+              shards &= ids.map { |id| Shard.shard_for(id) }
               scope = scope.where(id: ids)
             end
           end
@@ -1859,9 +1862,11 @@ class User < ActiveRecord::Base
           end
 
           GuardRail.activate(:secondary) do
-            scope.select("courses.*, enrollments.id AS primary_enrollment_id, enrollments.type AS primary_enrollment_type, enrollments.role_id AS primary_enrollment_role_id, #{Enrollment.type_rank_sql} AS primary_enrollment_rank, enrollments.workflow_state AS primary_enrollment_state, enrollments.created_at AS primary_enrollment_date").
-                order(Arel.sql("courses.id, #{Enrollment.type_rank_sql}, #{Enrollment.state_rank_sql}")).
-                distinct_on(:id).shard(shards).to_a
+            Shard.with_each_shard(shards) do
+              scope.select("courses.*, enrollments.id AS primary_enrollment_id, enrollments.type AS primary_enrollment_type, enrollments.role_id AS primary_enrollment_role_id, #{Enrollment.type_rank_sql} AS primary_enrollment_rank, enrollments.workflow_state AS primary_enrollment_state, enrollments.created_at AS primary_enrollment_date")
+                .order(Arel.sql("courses.id, #{Enrollment.type_rank_sql}, #{Enrollment.state_rank_sql}"))
+                .distinct_on(:id).shard(Shard.current)
+            end
           end
         end
         result.dup
@@ -2954,7 +2959,7 @@ class User < ActiveRecord::Base
   def adminable_accounts
     @adminable_accounts ||= shard.activate do
       Rails.cache.fetch(['adminable_accounts_1', self, ApplicationController.region].cache_key) do
-        adminable_accounts_scope.order(Account.best_unicode_collation_key('name'), :id).to_a
+        adminable_accounts_scope.order(:id).to_a
       end
     end
   end

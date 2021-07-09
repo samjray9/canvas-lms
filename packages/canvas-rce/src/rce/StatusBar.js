@@ -21,7 +21,7 @@ import ReactDOM from 'react-dom'
 import {arrayOf, bool, func, number, oneOf, string} from 'prop-types'
 import {StyleSheet, css} from 'aphrodite'
 import keycode from 'keycode'
-import {Button} from '@instructure/ui-buttons'
+import {Button, CondensedButton, IconButton} from '@instructure/ui-buttons'
 import {Flex} from '@instructure/ui-flex'
 import {View} from '@instructure/ui-view'
 import {ScreenReaderContent} from '@instructure/ui-a11y-content'
@@ -53,7 +53,8 @@ StatusBar.propTypes = {
   onA11yChecker: func.isRequired,
   onFullscreen: func.isRequired,
   use_rce_pretty_html_editor: bool,
-  preferredHtmlEditor: oneOf([PRETTY_HTML_EDITOR_VIEW, RAW_HTML_EDITOR_VIEW])
+  preferredHtmlEditor: oneOf([PRETTY_HTML_EDITOR_VIEW, RAW_HTML_EDITOR_VIEW]),
+  readOnly: bool
 }
 
 /* eslint-enable react/no-unused-prop-types */
@@ -130,7 +131,7 @@ export default function StatusBar(props) {
   }
 
   function handleKey(event) {
-    const buttons = findFocusable(statusBarRef.current)
+    const buttons = findFocusable(statusBarRef.current).filter(b => !b.disabled)
     const focusedIndex = buttons.findIndex(b => b.getAttribute('data-btn-id') === focusedBtnId)
     let newFocusedIndex
     if (event.keyCode === keycode.codes.right) {
@@ -173,9 +174,9 @@ export default function StatusBar(props) {
         : formatMessage('Pretty HTML Editor')
     return (
       <View data-testid="html-editor-message">
-        <Button
+        <CondensedButton
           data-btn-id="rce-editormessage-btn"
-          variant="link"
+          margin="0 small"
           title={message}
           tabIndex={tabIndexForBtn('rce-editormessage-btn')}
           onClick={event => {
@@ -189,7 +190,7 @@ export default function StatusBar(props) {
           onFocus={() => setFocusedBtnId('rce-editormessage-btn')}
         >
           {label}
-        </Button>
+        </CondensedButton>
       </View>
     )
   }
@@ -200,10 +201,9 @@ export default function StatusBar(props) {
     const a11y = formatMessage('Accessibility Checker')
     return (
       <View display="inline-block" padding="0 x-small">
-        <Button
+        <IconButton
           data-btn-id="rce-kbshortcut-btn"
-          variant="link"
-          icon={IconKeyboardShortcutsLine}
+          color="primary"
           title={kbshortcut}
           tabIndex={tabIndexForBtn('rce-kbshortcut-btn')}
           onClick={event => {
@@ -211,23 +211,30 @@ export default function StatusBar(props) {
             props.onKBShortcutModalOpen()
           }}
           onFocus={() => setFocusedBtnId('rce-kbshortcut-btn')}
+          screenReaderLabel={kbshortcut}
+          withBackground={false}
+          withBorder={false}
         >
-          <ScreenReaderContent>{kbshortcut}</ScreenReaderContent>
-        </Button>
-        <Button
-          data-btn-id="rce-a11y-btn"
-          variant="link"
-          icon={IconA11yLine}
-          title={a11y}
-          tabIndex={tabIndexForBtn('rce-a11y-btn')}
-          onClick={event => {
-            event.target.focus()
-            props.onA11yChecker()
-          }}
-          onFocus={() => setFocusedBtnId('rce-a11y-btn')}
-        >
-          <ScreenReaderContent>{a11y}</ScreenReaderContent>
-        </Button>
+          <IconKeyboardShortcutsLine />
+        </IconButton>
+        {props.readOnly || (
+          <IconButton
+            data-btn-id="rce-a11y-btn"
+            color="primary"
+            title={a11y}
+            tabIndex={tabIndexForBtn('rce-a11y-btn')}
+            onClick={event => {
+              event.target.focus()
+              props.onA11yChecker()
+            }}
+            onFocus={() => setFocusedBtnId('rce-a11y-btn')}
+            screenReaderLabel={a11y}
+            withBackground={false}
+            withBorder={false}
+          >
+            <IconA11yLine />
+          </IconButton>
+        )}
       </View>
     )
   }
@@ -268,34 +275,38 @@ export default function StatusBar(props) {
 
     return (
       <View display="inline-block" padding="0 0 0 x-small">
-        <Button
-          data-btn-id="rce-edit-btn"
-          variant="link"
-          icon={emptyTagIcon()}
-          onClick={event => {
-            props.onChangeView(isHtmlView() ? WYSIWYG_VIEW : getHtmlEditorView(event))
-          }}
-          onKeyUp={event => {
-            if (
-              props.use_rce_pretty_html_editor &&
-              props.editorView === WYSIWYG_VIEW &&
-              event.shiftKey &&
-              event.keyCode === 79
-            ) {
-              const html_view =
-                preferredHtmlEditor() === RAW_HTML_EDITOR_VIEW
-                  ? PRETTY_HTML_EDITOR_VIEW
-                  : RAW_HTML_EDITOR_VIEW
-              props.onChangeView(html_view)
-            }
-          }}
-          onFocus={() => setFocusedBtnId('rce-edit-btn')}
-          title={titleText}
-          tabIndex={tabIndexForBtn('rce-edit-btn')}
-          aria-describedby={includeEdtrDesc ? 'edit-button-desc' : undefined}
-        >
-          <ScreenReaderContent>{descText}</ScreenReaderContent>
-        </Button>
+        {props.readOnly || (
+          <IconButton
+            data-btn-id="rce-edit-btn"
+            color="primary"
+            onClick={event => {
+              props.onChangeView(isHtmlView() ? WYSIWYG_VIEW : getHtmlEditorView(event))
+            }}
+            onKeyUp={event => {
+              if (
+                props.use_rce_pretty_html_editor &&
+                props.editorView === WYSIWYG_VIEW &&
+                event.shiftKey &&
+                event.keyCode === 79
+              ) {
+                const html_view =
+                  preferredHtmlEditor() === RAW_HTML_EDITOR_VIEW
+                    ? PRETTY_HTML_EDITOR_VIEW
+                    : RAW_HTML_EDITOR_VIEW
+                props.onChangeView(html_view)
+              }
+            }}
+            onFocus={() => setFocusedBtnId('rce-edit-btn')}
+            title={titleText}
+            tabIndex={tabIndexForBtn('rce-edit-btn')}
+            aria-describedby={includeEdtrDesc ? 'edit-button-desc' : undefined}
+            screenReaderLabel={descText}
+            withBackground={false}
+            withBorder={false}
+          >
+            {emptyTagIcon()}
+          </IconButton>
+        )}
         {includeEdtrDesc && (
           <span style={{display: 'none'}} id="edit-button-desc">
             {descMsg()}
@@ -306,16 +317,16 @@ export default function StatusBar(props) {
   }
 
   function renderFullscreen() {
+    if (props.readOnly) return null
     if (props.editorView === RAW_HTML_EDITOR_VIEW && !('requestFullscreen' in document.body)) {
       // this is safari, which refuses to fullscreen a textarea
       return null
     }
     const fullscreen = formatMessage('Fullscreen')
     return (
-      <Button
+      <IconButton
         data-btn-id="rce-fullscreen-btn"
-        variant="link"
-        icon={IconFullScreenLine}
+        color="primary"
         title={fullscreen}
         tabIndex={tabIndexForBtn('rce-fullscreen-btn')}
         onClick={event => {
@@ -323,9 +334,12 @@ export default function StatusBar(props) {
           props.onFullscreen()
         }}
         onFocus={() => setFocusedBtnId('rce-fullscreen-btn')}
+        screenReaderLabel={fullscreen}
+        withBackground={false}
+        withBorder={false}
       >
-        <ScreenReaderContent>{fullscreen}</ScreenReaderContent>
-      </Button>
+        <IconFullScreenLine />
+      </IconButton>
     )
   }
 
@@ -351,7 +365,7 @@ export default function StatusBar(props) {
       ref={statusBarRef}
       onKeyDown={handleKey}
     >
-      <Flex.Item grow>{isHtmlView() ? renderHtmlEditorMessage() : renderPath()}</Flex.Item>
+      <Flex.Item shouldGrow>{isHtmlView() ? renderHtmlEditorMessage() : renderPath()}</Flex.Item>
 
       <Flex.Item role="toolbar" title={formatMessage('Editor Statusbar')}>
         {renderIconButtons()}

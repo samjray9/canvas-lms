@@ -324,6 +324,7 @@ describe Message do
                                root_account: account)
 
 
+      expect(InstStatsd::Statsd).to receive(:increment).with("feature_flag_check", any_args).at_least(:once)
       expect(InstStatsd::Statsd).to receive(:increment).with("message.deliver.email.my_name",
                                                              {short_stat: "message.deliver",
                                                               tags: {path_type: "email", notification_name: 'my_name'}})
@@ -444,6 +445,30 @@ describe Message do
         )
         expect(@message).to receive(:deliver_via_sms)
         @message.deliver
+      end
+
+      context 'deprecate_sms is enabled' do
+        before do
+          Account.site_admin.enable_feature!(:deprecate_sms)
+        end
+
+        after do
+          Account.site_admin.disable_feature!(:deprecate_sms)
+        end
+
+        it "doesn't allow sms notification" do
+          message_model(
+            dispatch_at: Time.zone.now,
+            workflow_state: 'staged',
+            to: '+18015550100',
+            updated_at: Time.now.utc - 11.minutes,
+            path_type: 'sms',
+            notification_name: 'Assignment Graded',
+            user: @user
+          )
+          expect(@message).to_not receive(:deliver_via_sms)
+          @message.deliver
+        end
       end
 
       it "does not deliver notification types not on the whitelist" do
@@ -867,6 +892,28 @@ describe Message do
       rescue Delayed::RetriableError => e
         expect(e.cause.is_a?(::Message::QueuedNotFound)).to be_truthy
       end
+    end
+  end
+
+  describe ".infer_feature_account" do
+    it "is the root account for the message when available" do
+      ra = account_model
+      message = Message.new(root_account: ra)
+      expect(message.send(:infer_feature_account)).to eq(ra)
+    end
+
+    it "is the user's account if the RA is a dummy account" do
+      Account.ensure_dummy_root_account
+      root_account = Account.find(0)
+      user_account = Account.default
+      user = user_model
+      message = Message.new(root_account_id: root_account.id, user: user)
+      expect(message.send(:infer_feature_account)).to eq(user_account)
+    end
+
+    it "falls back to siteadmin" do
+      message = Message.new(root_account_id: nil, user_id: nil)
+      expect(message.send(:infer_feature_account)).to eq(Account.site_admin)
     end
   end
 end

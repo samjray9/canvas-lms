@@ -25,6 +25,7 @@ import {User} from './User'
 import {DiscussionEntry} from './DiscussionEntry'
 import {PageInfo} from './PageInfo'
 import {ChildTopic} from './ChildTopic'
+import {RootTopic} from './RootTopic'
 import {GroupSet} from './GroupSet'
 
 export const Discussion = {
@@ -38,6 +39,7 @@ export const Discussion = {
       updatedAt
       postedAt
       requireInitialPost
+      initialPostRequiredForCurrentUser
       isSectionSpecific
       discussionType
       allowRating
@@ -49,12 +51,6 @@ export const Discussion = {
       entryCounts {
         unreadCount
         repliesCount
-      }
-      author {
-        ...User
-      }
-      editor {
-        ...User
       }
       assignment {
         ...Assignment
@@ -71,13 +67,16 @@ export const Discussion = {
       groupSet {
         ...GroupSet
       }
+      rootTopic {
+        ...RootTopic
+      }
     }
-    ${User.fragment}
     ${Assignment.fragment}
     ${DiscussionPermissions.fragment}
     ${Section.fragment}
     ${ChildTopic.fragment}
     ${GroupSet.fragment}
+    ${RootTopic.fragment}
   `,
 
   shape: shape({
@@ -89,6 +88,7 @@ export const Discussion = {
     updatedAt: string,
     postedAt: string,
     requireInitialPost: bool,
+    initialPostRequiredForCurrentUser: bool,
     isSectionSpecific: bool,
     discussionType: string,
     allowRating: bool,
@@ -108,6 +108,7 @@ export const Discussion = {
     courseSections: arrayOf(Section.shape),
     childTopics: arrayOf(ChildTopic.shape),
     groupSet: GroupSet.shape,
+    rootTopic: RootTopic.shape,
     rootEntriesTotalPages: number,
     entriesTotalPages: number
   }),
@@ -121,6 +122,7 @@ export const Discussion = {
     updatedAt = '2021-04-22T12:41:56-06:00',
     postedAt = '2020-11-23T11:40:44-07:00',
     requireInitialPost = false,
+    initialPostRequiredForCurrentUser = false,
     isSectionSpecific = false,
     discussionType = 'threaded',
     allowRating = true,
@@ -141,6 +143,7 @@ export const Discussion = {
     courseSections = [Section.mock()],
     childTopics = [ChildTopic.mock()],
     groupSet = GroupSet.mock(),
+    rootTopic = RootTopic.mock(),
     entriesTotalPages = 2,
     discussionEntriesConnection = {
       nodes: [DiscussionEntry.mock()],
@@ -156,6 +159,7 @@ export const Discussion = {
     updatedAt,
     postedAt,
     requireInitialPost,
+    initialPostRequiredForCurrentUser,
     isSectionSpecific,
     discussionType,
     allowRating,
@@ -172,6 +176,7 @@ export const Discussion = {
     courseSections,
     childTopics,
     groupSet,
+    rootTopic,
     entriesTotalPages,
     discussionEntriesConnection,
     __typename: 'Discussion'

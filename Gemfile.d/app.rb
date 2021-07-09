@@ -22,13 +22,13 @@
 if CANVAS_RAILS6_0
   gem 'rails', '6.0.3.7'
     gem 'tzinfo', '1.2.7'
-  gem 'switchman', '2.0.9'
+  gem 'switchman', '2.0.13'
     gem 'guardrail', '2.0.1'
   gem 'switchman-inst-jobs', '3.1.2'
 else
   gem 'rails', '6.1.3.2'
     gem 'tzinfo', '2.0.4'
-  gem 'switchman', '3.0.1'
+  gem 'switchman', '3.0.5'
     gem 'guardrail', '3.0.0'
   gem 'switchman-inst-jobs', '4.0.0'
 end
@@ -39,6 +39,7 @@ gem 'academic_benchmarks', '1.1.1', require: false
 gem 'active_model-better_errors', '1.6.7', require: 'active_model/better_errors'
 gem 'active_model_serializers', '0.9.0alpha1',
   github: 'rails-api/active_model_serializers', ref: '61882e1e4127facfe92e49057aec71edbe981829'
+gem 'activerecord-pg-extensions', '0.2.3'
 gem 'addressable', '2.7.0', require: false
 gem 'after_transaction_commit', '2.2.2'
 gem 'authlogic', '6.4.1'

@@ -31,6 +31,22 @@ class StudentAssignmentPageV2
       f("img[alt='Assignment Locked']")
     end
 
+    def attempt_dropdown
+      f("input[data-testid='attemptSelect']")
+    end
+
+    def attempt_tab
+      f("div[data-testid='attempt-tab']")
+    end
+
+    def file_input
+      f('input[data-testid="input-file-drop"]')
+    end
+
+    def uploaded_files_table
+      f('table[data-testid="uploaded_files_table"]')
+    end
+
     def lock_icon
       f("svg[name='IconLock']")
     end
@@ -59,10 +75,6 @@ class StudentAssignmentPageV2
       "span:contains('#{points_possible}')"
     end
 
-    def content_tablist
-      f("div[data-testid='assignment-2-student-content-tabs']")
-    end
-
     def comment_container
       f("div[data-testid='comments-container']")
     end
@@ -73,6 +85,18 @@ class StudentAssignmentPageV2
 
     def view_feedback_button
       fj('button:contains("View Feedback")')
+    end
+
+    def view_feedback_badge
+      f('div[data-testid="unread_comments_badge"]')
+    end
+
+    def tray_close_button
+      f("span[data-testid='tray-close-button']")
+    end
+
+    def load_more_comments_button
+      f("div[class='load-more-comments-button-container']")
     end
 
     def comment_text_area
@@ -91,20 +115,26 @@ class StudentAssignmentPageV2
       f("button[data-testid='start-text-entry']")
     end
 
-    def save_text_entry_button
-      f("button[data-testid='save-text-entry']")
-    end
-
     def edit_text_entry_button
       f("button[data-testid='edit-text-draft']")
     end
 
     def text_display_area
-      f("div[data-testid='attempt-tab']")
+      text_entry_area
     end
 
     def text_entry_area
-      f('iframe', f('.ic-RichContentEditor'))
+      f('[data-testid="text-editor"]')
+    end
+
+    def text_entry_text
+      driver.execute_script(
+        "return document.querySelector('iframe.tox-edit-area__iframe').contentDocument.body.textContent"
+      )
+    end
+
+    def student_footer
+      f('[data-testid="student-footer"]')
     end
 
     def mce_iframe_id
@@ -113,10 +143,6 @@ class StudentAssignmentPageV2
 
     def tiny_rce_ifr_id
       f('.tox-editor-container iframe')['id']
-    end
-
-    def wiki_body
-      f('#tinymce')
     end
 
     def text_draft_contents
@@ -129,12 +155,64 @@ class StudentAssignmentPageV2
       f("button[data-testid='media-modal-launch-button']")
     end
 
+    def media_comment_button
+      f("button[id='mediaCommentButton']")
+    end
+
     def media_modal
       f("span[aria-label='Upload Media']")
     end
 
+    def mark_as_done_toggle
+      f("button[data-testid='set-module-item-completion-button']")
+    end
+
+    def missing_pill
+      f("span[data-test-id='missing-pill']")
+    end
+
+    def late_pill
+      f("span[data-test-id='late-pill']")
+    end
+
+    def rubric_toggle
+      f("div[data-testid='rubric-tab']")
+    end
+
+    def similarity_pledge_checkbox
+      f("input[data-testid='similarity-pledge-checkbox']")
+    end
+
+    def similarity_pledge
+      f("div[data-testid='similarity-pledge']")
+    end
+
     def submit_button
       f('#submit-button')
+    end
+
+    def submit_button_enabled
+      f('#submit-button:not([disabled]')
+    end
+
+    def text_entry_submission_button
+      f("div[data-testid='online_text_entry']")
+    end
+
+    def try_again_button
+      f("button[data-testid='try-again-button']")
+    end
+
+    def cancel_attempt_button
+      f("button[data-testid='cancel-attempt-button']")
+    end
+
+    def back_to_attempt_button
+      f("button[data-testid='back-to-attempt-button']")
+    end
+
+    def footer
+      f("div[data-testid='student-footer']")
     end
 
     def leave_a_comment(comment)
@@ -143,10 +221,7 @@ class StudentAssignmentPageV2
     end
 
     def create_text_entry_draft(text)
-      start_text_entry_button.click
-      wait_for_tiny(text_entry_area)
       type_in_tiny('textarea', text)
-      save_text_entry_button.click
     end
 
     def create_url_draft(url)

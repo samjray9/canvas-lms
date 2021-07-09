@@ -19,10 +19,26 @@
 import {render} from '@testing-library/react'
 import React from 'react'
 import {PostMessage} from '../PostMessage'
+import {SearchContext} from '../../../utils/constants'
 
 const setup = props => {
+  if (props?.searchTerm) {
+    return render(
+      <SearchContext.Provider value={{searchTerm: props.searchTerm}}>
+        <PostMessage
+          hasAuthor
+          authorName="Foo Bar"
+          timingDisplay="Jan 1 2000"
+          message="Posts are fun"
+          title="Thoughts"
+          {...props}
+        />
+      </SearchContext.Provider>
+    )
+  }
   return render(
     <PostMessage
+      hasAuthor
       authorName="Foo Bar"
       timingDisplay="Jan 1 2000"
       message="Posts are fun"
@@ -58,12 +74,59 @@ describe('PostMessage', () => {
     expect(queryByText('Smol children')).toBeTruthy()
   })
 
+  it('Should not display author name and avatar when author is null', () => {
+    const {queryByTestId} = setup({hasAuthor: false})
+
+    expect(queryByTestId('author_name')).toBeNull()
+    expect(queryByTestId('author_avatar')).toBeNull()
+  })
+
+  it('Should display author name and avatar when author is set', () => {
+    const {queryByTestId} = setup()
+
+    expect(queryByTestId('author_name')).toBeTruthy()
+    expect(queryByTestId('author_avatar')).toBeTruthy()
+  })
+
   describe('avatar badge', () => {
     it('displays when isUnread is true', () => {
       const {queryByText, rerender} = setup()
       expect(queryByText('Unread post')).toBeFalsy()
       rerender(<PostMessage authorName="foo" timingDisplay="foo" message="foo" isUnread />)
       expect(queryByText('Unread post')).toBeTruthy()
+    })
+  })
+
+  describe('search highlighting', () => {
+    it('should not highlight text if no search term is present', () => {
+      const {queryAllByTestId} = setup()
+      expect(queryAllByTestId('highlighted-search-item').length).toBe(0)
+    })
+
+    it('should highlight search terms in message', () => {
+      const {queryAllByTestId} = setup({searchTerm: 'Posts'})
+      expect(queryAllByTestId('highlighted-search-item').length).toBe(1)
+    })
+
+    it('should highlight terms in author name', () => {
+      const {queryAllByTestId} = setup({searchTerm: 'Foo'})
+      expect(queryAllByTestId('highlighted-search-item').length).toBe(1)
+    })
+
+    it('should highlight multiple terms in postmessage', () => {
+      const {queryAllByTestId} = setup({
+        searchTerm: 'here',
+        message: 'a longer message with multiple highlights here and here'
+      })
+      expect(queryAllByTestId('highlighted-search-item').length).toBe(2)
+    })
+
+    it('highlighting should be case-insensitive', () => {
+      const {queryAllByTestId} = setup({
+        searchTerm: 'here',
+        message: 'a longer message with multiple highlights Here and here'
+      })
+      expect(queryAllByTestId('highlighted-search-item').length).toBe(2)
     })
   })
 

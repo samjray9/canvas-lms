@@ -85,6 +85,11 @@
 #         "locale": {
 #           "description": "The users locale.",
 #           "type": "string"
+#         },
+#         "k5_user": {
+#           "description": "Optional: Whether or not the user is a K5 user. This field is nil if the user settings are not for the user making the request.",
+#           "example": true,
+#           "type": "boolean"
 #         }
 #       }
 #     }
@@ -215,7 +220,6 @@ class ProfileController < ApplicationController
         add_crumb(t(:crumb, "%{user}'s settings", :user => @user.short_name), settings_profile_path)
         js_env(
           NEW_USER_TUTORIALS_ENABLED_AT_ACCOUNT: show_tutorial_ff_to_user,
-          NEW_FEATURES_UI: Account.site_admin.feature_enabled?(:new_features_ui),
           CONTEXT_BASE_URL: "/users/#{@user.id}"
         )
         render :profile

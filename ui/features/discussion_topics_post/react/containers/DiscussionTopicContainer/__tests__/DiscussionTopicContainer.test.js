@@ -28,6 +28,8 @@ import {mswServer} from '../../../../../../shared/msw/mswServer'
 import React from 'react'
 import {waitFor} from '@testing-library/dom'
 import {Discussion} from '../../../../graphql/Discussion'
+import {PeerReviews} from '../../../../graphql/PeerReviews'
+import {Assignment} from '../../../../graphql/Assignment'
 
 jest.mock('@canvas/rce/RichContentEditor')
 
@@ -75,11 +77,13 @@ describe('DiscussionTopicContainer', () => {
   const setOnFailure = jest.fn()
   const setOnSuccess = jest.fn()
   const assignMock = jest.fn()
+  const openMock = jest.fn()
   let liveRegion = null
 
   beforeAll(() => {
     delete window.location
     window.location = {assign: assignMock}
+    window.open = openMock
     window.ENV = {
       context_asset_string: 'course_1',
       course_id: '1',
@@ -93,6 +97,10 @@ describe('DiscussionTopicContainer', () => {
       document.body.appendChild(liveRegion)
     }
 
+    window.INST = {
+      editorButtons: []
+    }
+
     // eslint-disable-next-line no-undef
     fetchMock.dontMock()
     server.listen()
@@ -102,6 +110,7 @@ describe('DiscussionTopicContainer', () => {
     setOnFailure.mockClear()
     setOnSuccess.mockClear()
     assignMock.mockClear()
+    openMock.mockClear()
     server.resetHandlers()
   })
 
@@ -130,6 +139,30 @@ describe('DiscussionTopicContainer', () => {
     })
 
     expect(getByText('Published').closest('button').hasAttribute('disabled')).toBeTruthy()
+  })
+
+  it('renders a special alert for differentiated group assignments for readAsAdmin', async () => {
+    const container = setup({
+      discussionTopic: {
+        ...discussionTopicMock.discussionTopic,
+        groupSet: {name: 'test'},
+        assignment: {onlyVisibleToOverrides: true}
+      }
+    })
+    expect(await container.findByTestId('differentiated-alert')).toBeTruthy()
+  })
+
+  it('non-readAsAdmin does not see Diff. Group Assignments alert', async () => {
+    const container = setup({
+      discussionTopic: {
+        ...discussionTopicMock.discussionTopic,
+        groupSet: {name: 'test'},
+        assignment: {onlyVisibleToOverrides: true},
+        permissions: {readAsAdmin: false}
+      }
+    })
+    expect(await container.findByTestId('graded-discussion-info')).toBeTruthy()
+    expect(await container.queryByTestId('differentiated-alert')).toBeFalsy()
   })
 
   it('renders without optional props', async () => {
@@ -172,18 +205,20 @@ describe('DiscussionTopicContainer', () => {
   })
 
   it('should be able to send to edit page when canUpdate', async () => {
-    const {getByTestId} = setup(discussionTopicMock)
+    const {getByTestId, getByText} = setup(discussionTopicMock)
     fireEvent.click(getByTestId('discussion-post-menu-trigger'))
-    fireEvent.click(getByTestId('edit'))
+    fireEvent.click(getByText('Edit'))
+
     await waitFor(() => {
       expect(assignMock).toHaveBeenCalledWith(getEditUrl('1', '1'))
     })
   })
 
   it('should be able to send to peer reviews page when canPeerReview', async () => {
-    const {getByTestId} = setup(discussionTopicMock)
+    const {getByTestId, getByText} = setup(discussionTopicMock)
     fireEvent.click(getByTestId('discussion-post-menu-trigger'))
-    fireEvent.click(getByTestId('peerReviews'))
+    fireEvent.click(getByText('Peer Reviews'))
+
     await waitFor(() => {
       expect(assignMock).toHaveBeenCalledWith(getPeerReviewsUrl('1', '1337'))
     })
@@ -191,9 +226,9 @@ describe('DiscussionTopicContainer', () => {
 
   it('Should be able to delete topic', async () => {
     window.confirm = jest.fn(() => true)
-    const {getByTestId, findByTestId} = setup(discussionTopicMock)
-    fireEvent.click(await findByTestId('discussion-post-menu-trigger'))
-    fireEvent.click(getByTestId('delete'))
+    const {getByTestId, getByText} = setup(discussionTopicMock)
+    fireEvent.click(getByTestId('discussion-post-menu-trigger'))
+    fireEvent.click(getByText('Delete'))
 
     await waitFor(() =>
       expect(setOnSuccess).toHaveBeenCalledWith('The discussion topic was successfully deleted.')
@@ -205,29 +240,52 @@ describe('DiscussionTopicContainer', () => {
 
   it('Should not be able to delete the topic if does not have permission', async () => {
     const {getByTestId, queryByTestId} = setup({
-      discussionTopic: {...discussionTopicMock.discussionTopic, permissions: {delete: false}}
+      discussionTopic: {
+        ...discussionTopicMock.discussionTopic,
+        permissions: {copyAndSendTo: true, delete: false}
+      }
     })
     fireEvent.click(getByTestId('discussion-post-menu-trigger'))
     expect(queryByTestId('delete')).toBeNull()
   })
 
   it('Should be able to open SpeedGrader', async () => {
-    const {getByTestId} = setup(discussionTopicMock)
+    const {getByTestId, getByText} = setup(discussionTopicMock)
     fireEvent.click(getByTestId('discussion-post-menu-trigger'))
-    fireEvent.click(getByTestId('speedGrader'))
+    fireEvent.click(getByText('Open in Speedgrader'))
 
     await waitFor(() => {
-      expect(assignMock).toHaveBeenCalledWith(getSpeedGraderUrl('1', '1337'))
+      expect(openMock).toHaveBeenCalledWith(getSpeedGraderUrl('1', '1337'), '_blank')
     })
   })
 
-  it('Should not be able to open SpeedGrader if the user does not have permission', () => {
-    const {getByTestId, queryByTestId} = setup({
-      discussionTopic: {...discussionTopicMock.discussionTopic, permissions: {speedGrader: false}}
+  it('Should find due date text for assignment', async () => {
+    const container = setup({
+      discussionTopic: {...discussionTopicMock.discussionTopic, permissions: {readAsAdmin: false}}
+    })
+    expect(await container.findByText('Due: Apr 5 1:40pm')).toBeTruthy()
+  })
+
+  it('Should not be able to see post menu if no permissions and initialPostRequiredForCurrentUser', () => {
+    const {queryByTestId} = setup({
+      discussionTopic: {
+        ...discussionTopicMock.discussionTopic,
+        ...{initialPostRequiredForCurrentUser: true, permissions: {speedGrader: false}}
+      }
     })
 
+    expect(queryByTestId('discussion-post-menu-trigger')).toBeNull()
+  })
+
+  it('Should show Mark All as Read discussion topic menu if initialPostRequiredForCurrentUser = false ', async () => {
+    const {getByTestId, getByText} = setup({
+      discussionTopic: {
+        ...discussionTopicMock.discussionTopic,
+        ...{initialPostRequiredForCurrentUser: false, permissions: {}}
+      }
+    })
     fireEvent.click(getByTestId('discussion-post-menu-trigger'))
-    expect(queryByTestId('speedGrader')).toBeNull()
+    expect(getByText('Mark All as Read')).toBeInTheDocument()
   })
 
   it.skip('Renders Add Rubric in the kabob menu if the user has permission', () => {
@@ -272,6 +330,20 @@ describe('DiscussionTopicContainer', () => {
     expect(getByText('Close for Comments')).toBeInTheDocument()
   })
 
+  it('does not render Close for Comments even when there is permission if child topic', () => {
+    const container = setup({
+      discussionTopic: {
+        ...discussionTopicMock.discussionTopic,
+        ...{
+          rootTopic: {id: 'asdasdasd', _id: '12', __typename: 'Discussion'},
+          permissions: {closeForComments: true}
+        }
+      }
+    })
+    fireEvent.click(container.getByTestId('discussion-post-menu-trigger'))
+    expect(container.queryByText('Close for Comments')).toBeNull()
+  })
+
   it('Renders Copy To and Send To in the kabob menu if the user has permission', () => {
     const {getByTestId, getByText} = setup({
       discussionTopic: {
@@ -294,6 +366,11 @@ describe('DiscussionTopicContainer', () => {
     })
     const kebob = await container.findByTestId('discussion-post-menu-trigger')
     fireEvent.click(kebob)
+
+    await waitFor(() => {
+      expect(tinymce.editors[0]).toBeDefined()
+    })
+
     const sendToButton = await container.findByText('Send To...')
     fireEvent.click(sendToButton)
     expect(await container.findByText('Send to:')).toBeTruthy()
@@ -315,13 +392,14 @@ describe('DiscussionTopicContainer', () => {
   })
 
   it('can send users to Commons if they can manageContent', async () => {
-    const container = setup(discussionTopicMock)
-    const kebob = await container.findByTestId('discussion-post-menu-trigger')
-    fireEvent.click(kebob)
-    const shareToCommonsOption = await container.findByTestId('shareToCommons')
-    fireEvent.click(shareToCommonsOption)
+    const {getByTestId, getByText} = setup(discussionTopicMock)
+    fireEvent.click(getByTestId('discussion-post-menu-trigger'))
+    fireEvent.click(getByText('Share to Commons'))
+
     await waitFor(() => {
-      expect(assignMock).toHaveBeenCalledWith('example.com')
+      expect(assignMock).toHaveBeenCalledWith(
+        `example.com&discussion_topics%5B%5D=${discussionTopicMock.discussionTopic._id}`
+      )
     })
   })
 
@@ -330,6 +408,11 @@ describe('DiscussionTopicContainer', () => {
     await waitFor(() =>
       expect(container.getByText('This is a Discussion Topic Message')).toBeInTheDocument()
     )
+
+    await waitFor(() => {
+      expect(tinymce.editors[0]).toBeDefined()
+    })
+
     expect(await container.findByTestId('discussion-topic-reply')).toBeInTheDocument()
   })
 
@@ -360,6 +443,15 @@ describe('DiscussionTopicContainer', () => {
     await waitFor(() => expect(container.queryByText('Super Group')).toBeTruthy())
   })
 
+  it('should show groups menu when discussion has no child topics but has sibling topics', async () => {
+    // defaultTopic has a root topic which has a child topic named Super Group
+    // we are only removing the child topic from defaultTopic itself, not its root topic
+    const container = setup({discussionTopic: {...defaultTopic, childTopics: null}})
+    expect(await container.queryByText('Super Group')).toBeFalsy()
+    fireEvent.click(await container.queryByTestId('groups-menu-btn'))
+    await waitFor(() => expect(container.queryByText('Super Group')).toBeTruthy())
+  })
+
   it('should not render group menu button when there is child topics but no group set', async () => {
     const container = setup({
       discussionTopic: {...discussionTopicMock.discussionTopic, groupSet: null}
@@ -369,9 +461,9 @@ describe('DiscussionTopicContainer', () => {
   })
 
   it('Should be able to close for comments', async () => {
-    const {getByTestId, findByTestId} = setup(discussionTopicMock)
-    fireEvent.click(await findByTestId('discussion-post-menu-trigger'))
-    fireEvent.click(getByTestId('toggle-comments'))
+    const {getByText, getByTestId} = setup(discussionTopicMock)
+    fireEvent.click(getByTestId('discussion-post-menu-trigger'))
+    fireEvent.click(getByText('Close for Comments'))
 
     await waitFor(() =>
       expect(setOnSuccess).toHaveBeenCalledWith(
@@ -385,14 +477,114 @@ describe('DiscussionTopicContainer', () => {
     testDiscussionTopicMock.discussionTopic.permissions.openForComments = true
     testDiscussionTopicMock.discussionTopic.permissions.closeForComments = false
 
-    const {getByTestId, findByTestId} = setup(testDiscussionTopicMock)
-    fireEvent.click(await findByTestId('discussion-post-menu-trigger'))
-    fireEvent.click(getByTestId('toggle-comments'))
+    const {getByText, getByTestId} = setup(testDiscussionTopicMock)
+    fireEvent.click(getByTestId('discussion-post-menu-trigger'))
+    fireEvent.click(getByText('Open for Comments'))
 
     await waitFor(() =>
       expect(setOnSuccess).toHaveBeenCalledWith(
         'You have successfully updated the discussion topic.'
       )
     )
+  })
+
+  it('Should find due date text', async () => {
+    const container = setup(discussionTopicMock)
+    expect(await container.findByText('Everyone: Due Apr 5 1:40pm')).toBeTruthy()
+  })
+
+  it('Should find "Show Due Dates" link button', async () => {
+    const props = {discussionTopic: Discussion.mock({})}
+    const container = setup(props)
+    expect(await container.findByText('Show Due Dates (2)')).toBeTruthy()
+  })
+
+  it('Should find due date text for "assignment override 3"', async () => {
+    const overrides = [
+      {
+        id: 'BXMzaWdebTVubC0x',
+        _id: '3',
+        dueAt: '2021-04-05T13:40:50Z',
+        lockAt: '2021-09-03T23:59:59-06:00',
+        unlockAt: '2021-03-21T00:00:00-06:00',
+        title: 'assignment override 3'
+      }
+    ]
+
+    const props = {discussionTopic: Discussion.mock({})}
+    props.discussionTopic.assignment.assignmentOverrides.nodes = overrides
+    props.discussionTopic.assignment.dueAt = null
+    props.discussionTopic.assignment.unlockAt = null
+    props.discussionTopic.assignment.lockAt = null
+    const container = setup(props)
+    expect(await container.findByText('assignment override 3: Due Apr 5 1:40pm')).toBeTruthy()
+  })
+
+  it('Should find no due date text for "assignment override 3"', async () => {
+    const overrides = [
+      {
+        id: 'BXMzaWdebTVubC0x',
+        _id: '3',
+        dueAt: '',
+        lockAt: '2021-09-03T23:59:59-06:00',
+        unlockAt: '2021-03-21T00:00:00-06:00',
+        title: 'assignment override 3'
+      }
+    ]
+
+    const props = {discussionTopic: Discussion.mock({})}
+    props.discussionTopic.assignment.assignmentOverrides.nodes = overrides
+    props.discussionTopic.assignment.dueAt = null
+    props.discussionTopic.assignment.unlockAt = null
+    props.discussionTopic.assignment.lockAt = null
+    const container = setup(props)
+    expect(await container.findByText('assignment override 3: No Due Date')).toBeTruthy()
+  })
+
+  it('Renders an alert if initialPostRequiredForCurrentUser is true', () => {
+    const props = {discussionTopic: Discussion.mock({initialPostRequiredForCurrentUser: true})}
+    const container = setup(props)
+    expect(container.getByText('You must post before seeing replies.')).toBeInTheDocument()
+  })
+
+  it('should not render author if author is null', async () => {
+    const props = {discussionTopic: Discussion.mock({author: null})}
+    const container = setup(props)
+    const pillContainer = container.queryAllByTestId('pill-Author')
+    expect(pillContainer).toEqual([])
+  })
+
+  describe('Peer Reviews', () => {
+    it('renders with a due date', () => {
+      const props = {discussionTopic: Discussion.mock()}
+      const {getByText} = setup(props)
+
+      expect(getByText('Peer review for Morty Smith Due: Mar 31 5:59am')).toBeTruthy()
+    })
+
+    it('renders with out a due date', () => {
+      const props = {
+        discussionTopic: Discussion.mock({
+          assignment: Assignment.mock({
+            peerReviews: PeerReviews.mock({dueAt: null})
+          })
+        })
+      }
+      const {getByText} = setup(props)
+
+      expect(getByText('Peer review for Morty Smith')).toBeTruthy()
+    })
+
+    it('does not render peer reviews if there are not any', () => {
+      const props = {
+        discussionTopic: Discussion.mock({
+          peerReviews: null,
+          assessmentRequestsForCurrentUser: []
+        })
+      }
+      const {queryByText} = setup(props)
+
+      expect(queryByText('eer review for Morty Smith Due: Mar 31 5:59am')).toBeNull()
+    })
   })
 })

@@ -79,7 +79,7 @@ describe('Attachment', () => {
     expect(props.setBlob).toHaveBeenCalledWith(mockedBlob)
   })
 
-  it('focus Use Webcam when remove the picture', async () => {
+  it('focuses on Use Webcam button when removing the photo', async () => {
     const mockedBlob = jest.mock()
     jest
       .spyOn(HTMLCanvasElement.prototype, 'toBlob')
